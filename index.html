@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Etymology Game</title>
+    <style>
+        /* Basic styles for bubbles */
+        .bubble {
+            display: inline-block;
+            padding: 15px;
+            margin: 10px;
+            background-color: lightblue;
+            border-radius: 50%;
+            cursor: pointer;
+            text-align: center;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-area">
+        <p>Click on the word parts to reveal the etymology!</p>
+    </div>
+    
+    <script>
+        async function loadGameData() {
+            const sheetUrl = 'https://spreadsheets.google.com/feeds/list/2PACX-1vScDHGbd8ys4nzR8-KkCBwCMMrFaDlQcKHbzqC6d_Q0GOa-Vdi04E8Xcazl2VqEbDcmXhYGGYvMAfNE/1/public/values?alt=json';
+            const response = await fetch(sheetUrl);
+            const data = await response.json();
+
+            // Parse the Google Sheets data
+            const words = data.feed.entry.map(entry => ({
+                word: entry.gsx$word.$t,
+                language: entry.gsx$language.$t,
+                translation: entry.gsx$translation.$t,
+                origin: entry.gsx$origin.$t.split(", ")
+            }));
+            return words;
+        }
+
+        async function startGame() {
+            const words = await loadGameData();
+            const gameArea = document.getElementById('game-area');
+
+            words.forEach(wordEntry => {
+                // Create a bubble for the main word
+                const wordBubble = document.createElement('div');
+                wordBubble.classList.add('bubble');
+                wordBubble.textContent = wordEntry.word;
+                wordBubble.onclick = () => showEtymology(wordEntry);
+
+                gameArea.appendChild(wordBubble);
+
+                // Create bubbles for each origin part
+                wordEntry.origin.forEach(part => {
+                    const partBubble = document.createElement('div');
+                    partBubble.classList.add('bubble');
+                    partBubble.textContent = part;
+
+                    // Find additional details for this part if it exists in the data
+                    const originDetail = words.find(w => w.word === part);
+                    partBubble.onclick = () => showEtymology(originDetail || { word: part, language: 'Unknown', translation: 'Unknown' });
+
+                    gameArea.appendChild(partBubble);
+                });
+            });
+        }
+
+        function showEtymology(wordEntry) {
+            alert(`Word: ${wordEntry.word}\nLanguage: ${wordEntry.language}\nTranslation: ${wordEntry.translation}`);
+        }
+
+        startGame();
+    </script>
+</body>
+</html>
