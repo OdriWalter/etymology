@@ -1,0 +1,20 @@
+[
+    {
+        "word": "telephone",
+        "language": "English",
+        "translation": "communication device",
+        "origin": ["tele", "phone"]
+    },
+    {
+        "word": "tele",
+        "language": "Greek",
+        "translation": "through",
+        "origin": []
+    },
+    {
+        "word": "phone",
+        "language": "Greek",
+        "translation": "sound",
+        "origin": []
+    }
+]
