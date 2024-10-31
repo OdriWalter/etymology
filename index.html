@@ -23,23 +23,40 @@
     </div>
     
     <script>
-        async function loadGameData() {
-            const response = await fetch('data.json');  // Fetch from the local JSON file
-            const words = await response.json();
-            return words;
-        }
+        // Directly embed the data as a JavaScript array
+        const words = [
+            {
+                word: "telephone",
+                language: "English",
+                translation: "communication device",
+                origin: ["tele", "phone"]
+            },
+            {
+                word: "tele",
+                language: "Greek",
+                translation: "through",
+                origin: []
+            },
+            {
+                word: "phone",
+                language: "Greek",
+                translation: "sound",
+                origin: []
+            }
+        ];
 
-        async function startGame() {
-            const words = await loadGameData();
+        function startGame() {
             const gameArea = document.getElementById('game-area');
 
             words.forEach(wordEntry => {
+                // Create a bubble for the main word
                 const wordBubble = document.createElement('div');
                 wordBubble.classList.add('bubble');
                 wordBubble.textContent = wordEntry.word;
                 wordBubble.onclick = () => showEtymology(wordEntry);
                 gameArea.appendChild(wordBubble);
 
+                // Create bubbles for each origin part
                 wordEntry.origin.forEach(part => {
                     const partBubble = document.createElement('div');
                     partBubble.classList.add('bubble');
@@ -61,5 +78,3 @@
     </script>
 </body>
 </html>
-
-
