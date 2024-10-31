@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Etymology Game</title>
     <style>
-        /* Basic styles for bubbles */
+        /* CSS styles for bubbles */
         .bubble {
             display: inline-block;
             padding: 15px;
@@ -29,12 +29,13 @@
             const response = await fetch(sheetUrl);
             const data = await response.json();
 
-            // Parse the Google Sheets data
+            console.log(data);  // Check the structure of the data
+
             const words = data.feed.entry.map(entry => ({
                 word: entry.gsx$word.$t,
                 language: entry.gsx$language.$t,
                 translation: entry.gsx$translation.$t,
-                origin: entry.gsx$origin.$t.split(", ")
+                origin: entry.gsx$origin.$t ? entry.gsx$origin.$t.split(", ") : []
             }));
             return words;
         }
@@ -44,21 +45,17 @@
             const gameArea = document.getElementById('game-area');
 
             words.forEach(wordEntry => {
-                // Create a bubble for the main word
                 const wordBubble = document.createElement('div');
                 wordBubble.classList.add('bubble');
                 wordBubble.textContent = wordEntry.word;
                 wordBubble.onclick = () => showEtymology(wordEntry);
-
                 gameArea.appendChild(wordBubble);
 
-                // Create bubbles for each origin part
                 wordEntry.origin.forEach(part => {
                     const partBubble = document.createElement('div');
                     partBubble.classList.add('bubble');
                     partBubble.textContent = part;
 
-                    // Find additional details for this part if it exists in the data
                     const originDetail = words.find(w => w.word === part);
                     partBubble.onclick = () => showEtymology(originDetail || { word: part, language: 'Unknown', translation: 'Unknown' });
 
@@ -75,3 +72,4 @@
     </script>
 </body>
 </html>
+
