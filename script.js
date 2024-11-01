@@ -9,17 +9,15 @@ const wordSequencesList = [
       { word: "*bʰrew-", language: "Proto-Indo-European", translation: "to boil, to brew" }
     ]
   },
-  // Add more word sequences here
+  // You can add more word sequences here
 ];
 
 let wordSequence;
 let currentStage = 0;
 let previousBubble = null;
-let gameHeight = 0; // To keep track of total game height for camera movement
 
 const gameArea = document.getElementById("game");
 
-// Function to get random distractor words starting with the same letter
 function getDistractors(correctWord, number) {
   const firstLetter = correctWord.charAt(0).toLowerCase();
   const possibleWords = ["bramble", "brisk", "breakfast", "brave", "brown", "branch", "bridge", "brother", "bright"];
@@ -34,14 +32,12 @@ function getDistractors(correctWord, number) {
   return distractors;
 }
 
-// Start the game
 function startGame() {
-  // Randomly select a word sequence for each playthrough
   wordSequence = wordSequencesList[Math.floor(Math.random() * wordSequencesList.length)].sequence;
   currentStage = 0;
   gameArea.innerHTML = "";
-  gameHeight = 0;
   previousBubble = null;
+  gameArea.style.transform = `translateY(0px)`; // Reset camera position
   loadStage();
 }
 
@@ -52,33 +48,33 @@ function loadStage() {
   const correctBubble = createBubble(stageData, true);
 
   // Position the correct bubble
-  let bubbleY = -currentStage * 200; // Space bubbles vertically
+  let bubbleY;
   if (currentStage === 0) {
-    // First bubble at bottom center
-    bubbleY = 0;
-    correctBubble.style.bottom = "20px";
-    correctBubble.style.left = "50%";
-    correctBubble.style.transform = "translateX(-50%)";
+    // First bubble at the bottom center
+    bubbleY = window.innerHeight - 160; // Adjusted for bubble height
+    correctBubble.style.top = `${bubbleY}px`;
+    correctBubble.style.left = `calc(50% - 60px)`; // Center horizontally
   } else {
-    correctBubble.style.top = `${gameHeight}px`;
-    correctBubble.style.left = "50%";
-    correctBubble.style.transform = "translateX(-50%)";
+    // Subsequent bubbles above previous ones
+    const previousBubbleRect = previousBubble.getBoundingClientRect();
+    bubbleY = parseInt(previousBubble.style.top) - 200; // Space bubbles vertically
+    correctBubble.style.top = `${bubbleY}px`;
+    correctBubble.style.left = `calc(50% - 60px)`;
   }
-
-  // Update game height
-  gameHeight += 200;
 
   // Create distractor bubbles
   const distractorWords = getDistractors(stageData.word, 3);
   distractorWords.forEach(word => {
     const distractorBubble = createBubble({ word }, false);
-    distractorBubble.style.top = `${gameHeight - 200 + Math.random() * 100}px`; // Position near correct bubble
-    distractorBubble.style.left = `${Math.random() * 80 + 10}%`; // Random horizontal position
+    // Position distractor bubbles randomly around the correct bubble
+    distractorBubble.style.top = `${bubbleY + (Math.random() * 100 - 50)}px`;
+    distractorBubble.style.left = `${Math.random() * (window.innerWidth - 120)}px`;
   });
 
-  // Move camera up to the new bubble
+  // Move camera to focus on the new bubble
   if (currentStage > 0) {
-    gameArea.style.transform = `translateY(${-gameHeight + window.innerHeight / 2}px)`;
+    const cameraShift = bubbleY - (window.innerHeight / 2) + 60; // Center the bubble
+    gameArea.style.transform = `translateY(${-cameraShift}px)`;
   }
 }
 
@@ -88,7 +84,6 @@ function createBubble(wordData, isCorrect) {
   bubble.innerHTML = `<div class="word">${wordData.word}</div>`;
 
   if (isCorrect) {
-    bubble.classList.add("correct");
     // Store language and translation for later reveal
     bubble.dataset.language = wordData.language;
     bubble.dataset.translation = wordData.translation;
@@ -105,8 +100,11 @@ function createBubble(wordData, isCorrect) {
         <div class="translation">${wordData.translation}</div>
       `;
 
+      // Change bubble color after revealing
+      bubble.classList.add("correct");
+
       // Remove wrong bubbles
-      const wrongBubbles = document.querySelectorAll(".bubble:not(.correct):not(.exploded)");
+      const wrongBubbles = document.querySelectorAll(".bubble:not(.revealed)");
       wrongBubbles.forEach(b => {
         b.classList.add("explode");
         b.classList.add("exploded");
@@ -114,7 +112,10 @@ function createBubble(wordData, isCorrect) {
 
       // Connect bubbles
       if (previousBubble) {
-        createLine(previousBubble, bubble);
+        // Delay to ensure bubbles have rendered
+        setTimeout(() => {
+          createLine(previousBubble, bubble);
+        }, 50);
       }
       previousBubble = bubble;
       currentStage++;
