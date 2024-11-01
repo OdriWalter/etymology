@@ -33,10 +33,6 @@ body, html {
   transition: transform 0.3s;
 }
 
-.bubble.correct {
-  background-color: #90ee90;
-}
-
 .bubble .word {
   font-weight: bold;
 }
@@ -51,6 +47,10 @@ body, html {
 .bubble.revealed .language,
 .bubble.revealed .translation {
   display: block;
+}
+
+.bubble.correct {
+  background-color: #90ee90;
 }
 
 .line {
