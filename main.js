@@ -1,5 +1,5 @@
 // main.js - entry point tying together world, renderer, input and UI
-import { World } from './world.js';
+import { World, DEFAULT_WORLD_SEED } from './world.js';
 import { Renderer } from './renderer.js';
 import { Input } from './input.js';
 import { loadAssets } from './assets.js';
@@ -32,12 +32,62 @@ async function init() {
   try {
     const { palette, glyphs } = await loadAssets();
     const canvas = document.getElementById('canvas');
-    const world = new World(COLS, ROWS, palette);
+    const seedInput = document.getElementById('seedInput');
+    const applySeedBtn = document.getElementById('applySeed');
+    const randomSeedBtn = document.getElementById('randomSeed');
+
+    const initialSeedValue = seedInput && seedInput.value.trim() !== ''
+      ? seedInput.value.trim()
+      : DEFAULT_WORLD_SEED;
+
+    const world = new World(COLS, ROWS, palette, undefined, initialSeedValue);
+    if (seedInput) {
+      seedInput.value = world.seed.toString();
+    }
     const renderer = new Renderer(canvas, world, glyphs);
     const input = new Input(canvas, renderer, world);
     input.currentTileId = palette.defaultTileId;
 
     populatePaletteUI(palette, input);
+
+    const updateSeedUI = () => {
+      if (seedInput) {
+        seedInput.value = world.seed.toString();
+      }
+      renderer.draw();
+    };
+
+    const applySeedFromInput = () => {
+      if (!seedInput) return;
+      const raw = seedInput.value.trim();
+      if (raw === '') return;
+      const numeric = Number(raw);
+      const nextSeed = Number.isFinite(numeric) ? numeric : raw;
+      world.setSeed(nextSeed);
+      updateSeedUI();
+    };
+
+    if (applySeedBtn) {
+      applySeedBtn.onclick = () => {
+        applySeedFromInput();
+      };
+    }
+
+    if (seedInput) {
+      seedInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          applySeedFromInput();
+        }
+      });
+    }
+
+    if (randomSeedBtn) {
+      randomSeedBtn.onclick = () => {
+        const randomSeed = Math.floor(Math.random() * 0xffffffff);
+        world.setSeed(randomSeed);
+        updateSeedUI();
+      };
+    }
 
     // Add cart button
     const addCartBtn = document.getElementById('addCart');
@@ -84,6 +134,7 @@ async function init() {
         try {
           const data = JSON.parse(ev.target.result);
           world.deserialize(data);
+          updateSeedUI();
           renderer.fitCameraToWorld();
         } catch (ex) {
           alert('Failed to load world: ' + ex.message);

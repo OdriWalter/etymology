@@ -3,6 +3,46 @@
 const DEFAULT_ZOOM_MIN = 0;
 const DEFAULT_ZOOM_MAX = null;
 
+export const DEFAULT_WORLD_SEED = 0x3d3d3d3d;
+
+function normaliseSeed(seed) {
+  if (seed == null) {
+    return DEFAULT_WORLD_SEED;
+  }
+  if (typeof seed === 'number' && Number.isFinite(seed)) {
+    return seed >>> 0;
+  }
+  if (typeof seed === 'bigint') {
+    const masked = seed & BigInt(0xffffffff);
+    return Number(masked);
+  }
+  if (typeof seed === 'string') {
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      hash ^= seed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+  return DEFAULT_WORLD_SEED;
+}
+
+function createMulberry32(seed) {
+  let t = seed >>> 0;
+  return function mulberry32() {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function clamp01(value) {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
 function resolveTile(palette, defaultTileId, tileId) {
   if (!palette) return null;
   const resolved = palette.byId[tileId];
@@ -158,10 +198,17 @@ function pointWithinBounds(bounds, point) {
 
 // World class to hold tiles and carts
 export class World {
-  constructor(cols, rows, palette, bounds = { minX: 0, minY: 0, maxX: 1, maxY: 1 }) {
+  constructor(cols, rows, palette, bounds = { minX: 0, minY: 0, maxX: 1, maxY: 1 }, seed = DEFAULT_WORLD_SEED) {
     this.gridCols = cols;
     this.gridRows = rows;
     this.bounds = { ...bounds };
+    this.grid = [];
+    this._agents = [];
+    this.cartAgents = [];
+    this.carts = this.cartAgents;
+    this.nextCartId = 1;
+    this.seed = normaliseSeed(seed);
+    this._rng = createMulberry32(this.seed);
     this.setPalette(palette);
     this.layers = {
       terrain: {
@@ -170,7 +217,8 @@ export class World {
         params: {
           gridCols: cols,
           gridRows: rows,
-          defaultTileId: this.defaultTileId
+          defaultTileId: this.defaultTileId,
+          seed: this.seed
         },
         grid: []
       },
@@ -187,23 +235,84 @@ export class World {
       effect: {
         zoomMin: DEFAULT_ZOOM_MIN,
         zoomMax: DEFAULT_ZOOM_MAX,
-        agents: []
+        agents: this._agents
       }
     };
-    this.grid = [];
-    for (let r = 0; r < rows; r++) {
-      const row = [];
-      for (let c = 0; c < cols; c++) {
-        row.push(this.defaultTileId);
-      }
-      this.grid.push(row);
-    }
     this.layers.terrain.grid = this.grid;
-    this._agents = [];
-    this.layers.effect.agents = this._agents;
-    this.cartAgents = [];
-    this.carts = this.cartAgents;
-    this.nextCartId = 1;
+    this.regenerateTerrain();
+  }
+
+  _setSeedInternal(seed) {
+    this.seed = normaliseSeed(seed);
+    this._rng = createMulberry32(this.seed);
+    this._syncTerrainParams();
+  }
+
+  random() {
+    return this._rng();
+  }
+
+  setSeed(seed) {
+    const nextSeed = normaliseSeed(seed);
+    if (nextSeed === this.seed) {
+      return;
+    }
+    this._setSeedInternal(nextSeed);
+    this.regenerateTerrain();
+  }
+
+  regenerateTerrain() {
+    this._rng = createMulberry32(this.seed);
+    const paletteIds = this.palette?.tiles?.map(tile => tile.id) || [];
+    if (!paletteIds.includes(this.defaultTileId)) {
+      paletteIds.unshift(this.defaultTileId);
+    }
+    if (paletteIds.length === 0) {
+      this.grid = [];
+      this.layers.terrain.grid = this.grid;
+      this._syncTerrainParams();
+      return;
+    }
+
+    const rng = createMulberry32(this.seed ^ 0x9E3779B9);
+    const changeChanceBase = 0.05 + rng() * 0.15;
+    const jitterChance = 0.15 + rng() * 0.2;
+    const largeShiftChance = 0.02 + rng() * 0.05;
+    const gradientInfluence = 0.35 + rng() * 0.25;
+    const colInfluence = 0.2 + rng() * 0.3;
+
+    const rows = [];
+    const rowDenom = Math.max(1, this.gridRows - 1);
+    const colDenom = Math.max(1, this.gridCols - 1);
+
+    for (let r = 0; r < this.gridRows; r++) {
+      const rowGradient = r / rowDenom;
+      const rowBias = rng() * 0.5;
+      let currentIndex = Math.min(paletteIds.length - 1, Math.floor(clamp01(rowGradient * gradientInfluence + rowBias * (1 - gradientInfluence)) * paletteIds.length));
+      const row = [];
+      for (let c = 0; c < this.gridCols; c++) {
+        const columnGradient = c / colDenom;
+        if (rng() < changeChanceBase) {
+          const direction = rng() < 0.5 ? -1 : 1;
+          currentIndex = Math.min(paletteIds.length - 1, Math.max(0, currentIndex + direction));
+        } else if (rng() < largeShiftChance) {
+          currentIndex = Math.floor(rng() * paletteIds.length);
+        }
+
+        if (rng() < jitterChance) {
+          const targetIndex = Math.floor(clamp01(rowGradient * gradientInfluence + columnGradient * colInfluence) * paletteIds.length);
+          const blended = (currentIndex + targetIndex) / 2;
+          currentIndex = Math.min(paletteIds.length - 1, Math.max(0, Math.round(blended)));
+        }
+
+        row.push(paletteIds[currentIndex]);
+      }
+      rows.push(row);
+    }
+
+    this.grid = rows;
+    this.layers.terrain.grid = this.grid;
+    this._syncTerrainParams();
   }
 
   setPalette(palette) {
@@ -212,13 +321,7 @@ export class World {
     }
     this.palette = palette;
     this.defaultTileId = palette.defaultTileId;
-    if (this.layers && this.layers.terrain) {
-      this.layers.terrain.params = {
-        gridCols: this.gridCols,
-        gridRows: this.gridRows,
-        defaultTileId: this.defaultTileId
-      };
-    }
+    this._syncTerrainParams();
   }
 
   get width() {
@@ -307,10 +410,14 @@ export class World {
   }
 
   _syncTerrainParams() {
+    if (!this.layers || !this.layers.terrain) {
+      return;
+    }
     this.layers.terrain.params = {
       gridCols: this.gridCols,
       gridRows: this.gridRows,
-      defaultTileId: this.defaultTileId
+      defaultTileId: this.defaultTileId,
+      seed: this.seed
     };
   }
 
@@ -448,6 +555,7 @@ export class World {
     });
 
     return {
+      seed: this.seed,
       bounds: { ...this.bounds },
       gridCols: this.gridCols,
       gridRows: this.gridRows,
@@ -469,7 +577,8 @@ export class World {
           params: {
             gridCols: this.gridCols,
             gridRows: this.gridRows,
-            defaultTileId: this.defaultTileId
+            defaultTileId: this.defaultTileId,
+            seed: this.seed
           },
           grid: terrainGrid
         },
@@ -498,7 +607,6 @@ export class World {
     this.gridCols = cols;
     this.gridRows = rows;
     this.bounds = data.bounds ? { ...data.bounds } : { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-    this._syncTerrainParams();
 
     const legacyTileSize = data.tileSize;
     const isLegacy = legacyTileSize !== undefined && !data.bounds;
@@ -508,17 +616,24 @@ export class World {
     this.layers.terrain.zoomMax = this._normaliseZoomMax(terrainLayer.zoomMax);
 
     const incomingGrid = Array.isArray(terrainLayer.grid) ? terrainLayer.grid : (Array.isArray(data.grid) ? data.grid : []);
-    this.grid = [];
-    for (let r = 0; r < this.gridRows; r++) {
-      const sourceRow = incomingGrid[r] || [];
-      const row = [];
-      for (let c = 0; c < this.gridCols; c++) {
-        const tileId = sourceRow[c];
-        row.push(this.palette.byId[tileId] ? tileId : this.defaultTileId);
+    const incomingSeed = data.seed ?? terrainLayer.params?.seed;
+    if (incomingSeed != null) {
+      this._setSeedInternal(incomingSeed);
+      this.regenerateTerrain();
+    } else {
+      this.grid = [];
+      for (let r = 0; r < this.gridRows; r++) {
+        const sourceRow = incomingGrid[r] || [];
+        const row = [];
+        for (let c = 0; c < this.gridCols; c++) {
+          const tileId = sourceRow[c];
+          row.push(this.palette.byId[tileId] ? tileId : this.defaultTileId);
+        }
+        this.grid.push(row);
       }
-      this.grid.push(row);
+      this.layers.terrain.grid = this.grid;
+      this._syncTerrainParams();
     }
-    this.layers.terrain.grid = this.grid;
 
     const convertPoint = (pt) => {
       if (!pt) {
