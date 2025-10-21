@@ -1,30 +1,163 @@
-// bundle.js - single file bundle of the worldbox‑like engine
-// Defines world, renderer, input and initialises the engine without using ES modules.
-
+// bundle.js - single file bundle of the engine with palette/glyph asset loading
 (function() {
-  // Tile definitions
-  const TILE_TYPES = {
-    grass: { id: 0, name: 'Grass', color: '#8BC34A' },
-    forest: { id: 1, name: 'Forest', color: '#4CAF50' },
-    water: { id: 2, name: 'Water', color: '#2196F3' },
-    mountain: { id: 3, name: 'Mountain', color: '#795548' },
-    road: { id: 4, name: 'Road', color: '#FF9800' }
-  };
+  const PALETTE_PATH = './data/palette.json';
+  const GLYPHS_PATH = './data/glyphs.json';
 
-  function getTileById(id) {
-    for (const key in TILE_TYPES) {
-      if (TILE_TYPES[key].id === id) return TILE_TYPES[key];
+  function buildPaletteLUT(data) {
+    const tiles = (data.tiles || []).map((tile, index) => {
+      const assignedId = tile.id != null ? tile.id : index;
+      return { ...tile, id: assignedId };
+    });
+    if (tiles.length === 0) {
+      throw new Error('Palette definition contains no tiles');
     }
-    return TILE_TYPES.grass;
+    const byKey = {};
+    const byId = {};
+    for (const tile of tiles) {
+      if (!tile.key) {
+        throw new Error('Palette tile missing key');
+      }
+      byKey[tile.key] = tile;
+      byId[tile.id] = tile;
+    }
+    const fallbackKey = data.defaultTile && byKey[data.defaultTile]
+      ? data.defaultTile
+      : tiles[0].key;
+    const defaultTileId = byKey[fallbackKey].id;
+    return {
+      tiles,
+      byKey,
+      byId,
+      defaultTileKey: fallbackKey,
+      defaultTileId
+    };
   }
 
-  // Cart with polyline path and simple motion
+  function parseHexColor(hex) {
+    const normalized = hex.replace(/^#/, '');
+    if (![3, 4, 6, 8].includes(normalized.length)) {
+      throw new Error(`Unsupported hex colour: ${hex}`);
+    }
+    const expand = (value) => value.length === 1 ? value + value : value;
+    let r, g, b, a = 255;
+    if (normalized.length === 3 || normalized.length === 4) {
+      const rHex = expand(normalized[0]);
+      const gHex = expand(normalized[1]);
+      const bHex = expand(normalized[2]);
+      const aHex = normalized.length === 4 ? expand(normalized[3]) : 'ff';
+      r = parseInt(rHex, 16);
+      g = parseInt(gHex, 16);
+      b = parseInt(bHex, 16);
+      a = parseInt(aHex, 16);
+    } else {
+      r = parseInt(normalized.slice(0, 2), 16);
+      g = parseInt(normalized.slice(2, 4), 16);
+      b = parseInt(normalized.slice(4, 6), 16);
+      if (normalized.length === 8) {
+        a = parseInt(normalized.slice(6, 8), 16);
+      }
+    }
+    return { r, g, b, a };
+  }
+
+  function decodeRLE(rle, expected) {
+    if (!rle) return [];
+    const tokens = rle.trim().split(/\s+/);
+    const pixels = [];
+    for (const token of tokens) {
+      const parts = token.split('*');
+      if (parts.length !== 2) {
+        throw new Error(`Invalid RLE token: ${token}`);
+      }
+      const count = Number(parts[0]);
+      const value = Number(parts[1]);
+      if (!Number.isFinite(count) || !Number.isFinite(value)) {
+        throw new Error(`Invalid RLE pair: ${token}`);
+      }
+      for (let i = 0; i < count; i++) {
+        pixels.push(value);
+      }
+    }
+    if (expected != null && pixels.length !== expected) {
+      throw new Error(`RLE length ${pixels.length} does not match expected ${expected}`);
+    }
+    return pixels;
+  }
+
+  function expandGlyph(definition) {
+    const { width, height, palette = [], rle } = definition;
+    const pixelCount = width * height;
+    const pixels = decodeRLE(rle, pixelCount);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(width, height);
+    for (let i = 0; i < pixelCount; i++) {
+      const paletteIndex = pixels[i];
+      const color = palette[paletteIndex];
+      const offset = i * 4;
+      if (!color) {
+        imageData.data[offset] = 0;
+        imageData.data[offset + 1] = 0;
+        imageData.data[offset + 2] = 0;
+        imageData.data[offset + 3] = 0;
+        continue;
+      }
+      const { r, g, b, a } = parseHexColor(color);
+      imageData.data[offset] = r;
+      imageData.data[offset + 1] = g;
+      imageData.data[offset + 2] = b;
+      imageData.data[offset + 3] = a;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return {
+      ...definition,
+      pixels,
+      canvas
+    };
+  }
+
+  function buildGlyphRegistry(data) {
+    const glyphs = {};
+    const list = [];
+    for (const def of data.glyphs || []) {
+      if (!def.key) {
+        throw new Error('Glyph definition missing key');
+      }
+      const expanded = expandGlyph(def);
+      glyphs[def.key] = expanded;
+      list.push(expanded);
+    }
+    return { byKey: glyphs, list };
+  }
+
+  async function loadAssets() {
+    const [paletteRes, glyphRes] = await Promise.all([
+      fetch(PALETTE_PATH),
+      fetch(GLYPHS_PATH)
+    ]);
+    if (!paletteRes.ok) {
+      throw new Error(`Failed to load palette: ${paletteRes.status}`);
+    }
+    if (!glyphRes.ok) {
+      throw new Error(`Failed to load glyphs: ${glyphRes.status}`);
+    }
+    const [paletteJson, glyphJson] = await Promise.all([
+      paletteRes.json(),
+      glyphRes.json()
+    ]);
+    const palette = buildPaletteLUT(paletteJson);
+    const glyphs = buildGlyphRegistry(glyphJson);
+    return { palette, glyphs };
+  }
+
   class Cart {
     constructor(id) {
       this.id = id;
       this.path = [];
       this.position = { x: 0, y: 0 };
-      this.speed = 5; // tiles per second
+      this.speed = 5;
       this.progress = 0;
       this.loop = true;
       this.selected = false;
@@ -73,25 +206,40 @@
     }
   }
 
-  // World grid holding tiles and carts
+  function resolveTile(palette, defaultTileId, tileId) {
+    if (!palette) return null;
+    const resolved = palette.byId[tileId];
+    if (resolved) return resolved;
+    return palette.byId[defaultTileId];
+  }
+
   class World {
-    constructor(cols, rows, tileSize) {
+    constructor(cols, rows, tileSize, palette) {
       this.cols = cols;
       this.rows = rows;
       this.tileSize = tileSize;
+      this.setPalette(palette);
       this.grid = [];
       for (let r = 0; r < rows; r++) {
         const row = [];
         for (let c = 0; c < cols; c++) {
-          row.push(TILE_TYPES.grass.id);
+          row.push(this.defaultTileId);
         }
         this.grid.push(row);
       }
       this.carts = [];
       this.nextCartId = 1;
     }
+    setPalette(palette) {
+      if (!palette) {
+        throw new Error('Palette is required to create a World');
+      }
+      this.palette = palette;
+      this.defaultTileId = palette.defaultTileId;
+    }
     paintTile(col, row, tileId) {
       if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return;
+      if (!this.palette.byId[tileId]) return;
       this.grid[row][col] = tileId;
     }
     addCart() {
@@ -127,6 +275,9 @@
         cart.update(dt);
       }
     }
+    getTileDescriptor(tileId) {
+      return resolveTile(this.palette, this.defaultTileId, tileId);
+    }
     serialize() {
       return {
         cols: this.cols,
@@ -147,7 +298,7 @@
       this.cols = data.cols;
       this.rows = data.rows;
       this.tileSize = data.tileSize;
-      this.grid = data.grid.map(row => row.slice());
+      this.grid = data.grid.map(row => row.map(id => this.palette.byId[id] ? id : this.defaultTileId));
       this.carts = [];
       this.nextCartId = 1;
       for (const cd of data.carts) {
@@ -167,7 +318,6 @@
     }
   }
 
-  // Simple camera with pan and zoom
   class Camera {
     constructor() {
       this.x = 0;
@@ -188,7 +338,6 @@
     }
   }
 
-  // Renderer draws tiles, paths and carts onto a canvas
   class Renderer {
     constructor(canvas, world) {
       this.canvas = canvas;
@@ -226,7 +375,8 @@
       for (let row = rowStart; row <= rowEnd; row++) {
         for (let col = colStart; col <= colEnd; col++) {
           const tileId = world.grid[row][col];
-          const tile = getTileById(tileId);
+          const tile = world.getTileDescriptor(tileId);
+          if (!tile) continue;
           ctx.fillStyle = tile.color;
           ctx.fillRect(col * ts, row * ts, ts, ts);
         }
@@ -264,7 +414,6 @@
     }
   }
 
-  // Input handler for panning, zooming, painting and adding waypoints
   class InputHandler {
     constructor(canvas, renderer, world) {
       this.canvas = canvas;
@@ -351,19 +500,10 @@
     }
   }
 
-  // Bootstrapping function: called after DOM is ready
-  function init() {
-    const TILE_SIZE = 32;
-    const COLS = 50;
-    const ROWS = 50;
-    const canvas = document.getElementById('canvas');
-    const world = new World(COLS, ROWS, TILE_SIZE);
-    const renderer = new Renderer(canvas, world);
-    const input = new InputHandler(canvas, renderer, world);
-    // Build palette UI
+  function populatePaletteUI(palette, input) {
     const paletteDiv = document.getElementById('palette');
-    for (const key in TILE_TYPES) {
-      const tile = TILE_TYPES[key];
+    paletteDiv.innerHTML = '';
+    palette.tiles.forEach((tile) => {
       const btn = document.createElement('button');
       btn.textContent = tile.name;
       btn.style.backgroundColor = tile.color;
@@ -375,88 +515,103 @@
         btn.style.outline = '2px solid black';
       };
       paletteDiv.appendChild(btn);
-    }
-    // Select first tile by default
+    });
     if (paletteDiv.children.length > 0) {
       paletteDiv.children[0].click();
     }
-    // Add cart button
-    const addCartBtn = document.getElementById('addCart');
-    addCartBtn.onclick = () => {
-      const cart = world.addCart();
-      world.carts.forEach(c => c.selected = false);
-      cart.selected = true;
-    };
-    // Play/pause button
-    const playPauseBtn = document.getElementById('playPause');
-    let playing = false;
-    playPauseBtn.onclick = () => {
-      playing = !playing;
-      playPauseBtn.textContent = playing ? 'Pause' : 'Play';
-    };
-    // Save button
-    const saveBtn = document.getElementById('saveBtn');
-    saveBtn.onclick = () => {
-      const data = world.serialize();
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'world.json';
-      a.click();
-      URL.revokeObjectURL(url);
-    };
-    // Load button
-    const loadBtn = document.getElementById('loadBtn');
-    const loadInput = document.getElementById('loadInput');
-    loadBtn.onclick = () => {
-      loadInput.value = '';
-      loadInput.click();
-    };
-    loadInput.onchange = () => {
-      const file = loadInput.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        try {
-          const data = JSON.parse(ev.target.result);
-          world.deserialize(data);
-        } catch (ex) {
-          alert('Failed to load world: ' + ex.message);
-        }
+  }
+
+  async function init() {
+    try {
+      const { palette } = await loadAssets();
+      const TILE_SIZE = 32;
+      const COLS = 50;
+      const ROWS = 50;
+      const canvas = document.getElementById('canvas');
+      const world = new World(COLS, ROWS, TILE_SIZE, palette);
+      const renderer = new Renderer(canvas, world);
+      const input = new InputHandler(canvas, renderer, world);
+      input.currentTileId = palette.defaultTileId;
+
+      populatePaletteUI(palette, input);
+
+      const addCartBtn = document.getElementById('addCart');
+      addCartBtn.onclick = () => {
+        const cart = world.addCart();
+        world.carts.forEach(c => c.selected = false);
+        cart.selected = true;
       };
-      reader.readAsText(file);
-    };
-    // Animation loop
-    const FIXED_STEP = 1 / 60;
-    const MAX_FRAME_TIME = 0.25;
-    let accumulator = 0;
-    let lastTime = performance.now();
-    function frame(time) {
-      let frameTime = (time - lastTime) / 1000;
-      lastTime = time;
-      if (frameTime > MAX_FRAME_TIME) {
-        frameTime = MAX_FRAME_TIME;
-      }
-      if (playing) {
-        accumulator += frameTime;
-        while (accumulator >= FIXED_STEP) {
-          world.update(FIXED_STEP);
-          accumulator -= FIXED_STEP;
+
+      const playPauseBtn = document.getElementById('playPause');
+      let playing = false;
+      playPauseBtn.onclick = () => {
+        playing = !playing;
+        playPauseBtn.textContent = playing ? 'Pause' : 'Play';
+      };
+
+      const saveBtn = document.getElementById('saveBtn');
+      saveBtn.onclick = () => {
+        const data = world.serialize();
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'world.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      const loadBtn = document.getElementById('loadBtn');
+      const loadInput = document.getElementById('loadInput');
+      loadBtn.onclick = () => {
+        loadInput.value = '';
+        loadInput.click();
+      };
+      loadInput.onchange = () => {
+        const file = loadInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            world.deserialize(data);
+          } catch (ex) {
+            alert('Failed to load world: ' + ex.message);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const FIXED_STEP = 1 / 60;
+      const MAX_FRAME_TIME = 0.25;
+      let accumulator = 0;
+      let lastTime = performance.now();
+      function loop(time) {
+        let frameTime = (time - lastTime) / 1000;
+        lastTime = time;
+        if (frameTime > MAX_FRAME_TIME) {
+          frameTime = MAX_FRAME_TIME;
         }
-      } else {
-        accumulator = 0;
+        if (playing) {
+          accumulator += frameTime;
+          while (accumulator >= FIXED_STEP) {
+            world.update(FIXED_STEP);
+            accumulator -= FIXED_STEP;
+          }
+        } else {
+          accumulator = 0;
+        }
+        renderer.draw();
+        requestAnimationFrame(loop);
       }
-      renderer.draw();
-      requestAnimationFrame(frame);
+      requestAnimationFrame(loop);
+    } catch (err) {
+      console.error('Failed to initialise engine', err);
+      const paletteDiv = document.getElementById('palette');
+      paletteDiv.textContent = 'Failed to load assets';
     }
-    requestAnimationFrame(frame);
   }
-  // Run init when DOM content is loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+
+  init();
 })();

@@ -1,19 +1,10 @@
-// world.js - defines the world grid, tile types and carts
+// world.js - defines the world grid, tile descriptors from the palette and carts
 
-export const TILE_TYPES = {
-  grass: { id: 0, name: 'Grass', color: '#8BC34A' },
-  forest: { id: 1, name: 'Forest', color: '#4CAF50' },
-  water: { id: 2, name: 'Water', color: '#2196F3' },
-  mountain: { id: 3, name: 'Mountain', color: '#795548' },
-  road: { id: 4, name: 'Road', color: '#FF9800' }
-};
-
-// Convert an id back to the tile definition
-export function getTileById(id) {
-  for (const key in TILE_TYPES) {
-    if (TILE_TYPES[key].id === id) return TILE_TYPES[key];
-  }
-  return TILE_TYPES.grass;
+function resolveTile(palette, defaultTileId, tileId) {
+  if (!palette) return null;
+  const resolved = palette.byId[tileId];
+  if (resolved) return resolved;
+  return palette.byId[defaultTileId];
 }
 
 // Cart class with a polyline path and simple linear motion
@@ -78,16 +69,17 @@ export class Cart {
 
 // World class to hold tiles and carts
 export class World {
-  constructor(cols, rows, tileSize) {
+  constructor(cols, rows, tileSize, palette) {
     this.cols = cols;
     this.rows = rows;
     this.tileSize = tileSize;
-    // 2D grid initialised to grass
+    this.setPalette(palette);
+    // 2D grid initialised to default tile
     this.grid = [];
     for (let r = 0; r < rows; r++) {
       const row = [];
       for (let c = 0; c < cols; c++) {
-        row.push(TILE_TYPES.grass.id);
+        row.push(this.defaultTileId);
       }
       this.grid.push(row);
     }
@@ -95,8 +87,17 @@ export class World {
     this.nextCartId = 1;
   }
 
+  setPalette(palette) {
+    if (!palette) {
+      throw new Error('Palette is required to create a World');
+    }
+    this.palette = palette;
+    this.defaultTileId = palette.defaultTileId;
+  }
+
   paintTile(col, row, tileId) {
     if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return;
+    if (!this.palette.byId[tileId]) return;
     this.grid[row][col] = tileId;
   }
 
@@ -139,6 +140,10 @@ export class World {
     }
   }
 
+  getTileDescriptor(tileId) {
+    return resolveTile(this.palette, this.defaultTileId, tileId);
+  }
+
   // Serialize world to plain object
   serialize() {
     return {
@@ -162,7 +167,7 @@ export class World {
     this.cols = data.cols;
     this.rows = data.rows;
     this.tileSize = data.tileSize;
-    this.grid = data.grid.map(row => row.slice());
+    this.grid = data.grid.map(row => row.map(id => this.palette.byId[id] ? id : this.defaultTileId));
     this.carts = [];
     this.nextCartId = 1;
     for (const cd of data.carts) {
