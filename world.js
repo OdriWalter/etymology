@@ -359,12 +359,24 @@ export class World {
   }
 
   paintTile(nx, ny, tileId) {
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
     if (nx < this.bounds.minX || nx > this.bounds.maxX || ny < this.bounds.minY || ny > this.bounds.maxY) return;
     if (!this.palette.byId[tileId]) return;
-    const col = Math.floor((nx - this.bounds.minX) / this.cellWidth);
-    const row = Math.floor((ny - this.bounds.minY) / this.cellHeight);
-    if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return;
-    this.grid[row][col] = tileId;
+
+    const cellWidth = this.cellWidth;
+    const cellHeight = this.cellHeight;
+    if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
+
+    const relativeX = nx - this.bounds.minX;
+    const relativeY = ny - this.bounds.minY;
+    const col = Math.min(this.gridCols - 1, Math.max(0, Math.floor(relativeX / cellWidth)));
+    const row = Math.min(this.gridRows - 1, Math.max(0, Math.floor(relativeY / cellHeight)));
+    const gridRow = this.grid[row];
+    if (!gridRow || col < 0 || col >= gridRow.length) {
+      return;
+    }
+
+    gridRow[col] = tileId;
     this._recalculateAdjacencyAround(row, col);
   }
 
