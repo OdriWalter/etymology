@@ -1,0 +1,10 @@
+{
+  "defaultTile": "grass",
+  "tiles": [
+    { "key": "grass", "name": "Grass", "color": "#8BC34A" },
+    { "key": "forest", "name": "Forest", "color": "#4CAF50" },
+    { "key": "water", "name": "Water", "color": "#2196F3" },
+    { "key": "mountain", "name": "Mountain", "color": "#795548" },
+    { "key": "road", "name": "Road", "color": "#FF9800" }
+  ]
+}

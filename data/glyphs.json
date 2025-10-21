@@ -1,0 +1,20 @@
+{
+  "glyphs": [
+    {
+      "key": "tree",
+      "name": "Tree",
+      "width": 3,
+      "height": 3,
+      "palette": [null, "#4CAF50", "#795548"],
+      "rle": "1*0 1*1 1*0 1*1 1*2 1*1 1*0 1*1 1*0"
+    },
+    {
+      "key": "cart",
+      "name": "Cart",
+      "width": 5,
+      "height": 3,
+      "palette": [null, "#5D4037", "#FFEB3B"],
+      "rle": "2*0 1*1 2*0 1*0 1*1 1*2 1*1 1*0 1*0 3*1 1*0"
+    }
+  ]
+}

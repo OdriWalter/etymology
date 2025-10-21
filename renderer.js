@@ -1,5 +1,4 @@
 // renderer.js - draws the world and carts onto the canvas
-import { getTileById } from './world.js';
 
 export class Camera {
   constructor() {
@@ -64,7 +63,8 @@ export class Renderer {
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
         const tileId = world.grid[row][col];
-        const tile = getTileById(tileId);
+        const tile = world.getTileDescriptor(tileId);
+        if (!tile) continue;
         ctx.fillStyle = tile.color;
         ctx.fillRect(col * ts, row * ts, ts, ts);
       }
