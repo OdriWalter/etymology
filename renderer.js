@@ -50,7 +50,9 @@ export class Camera {
 
 function zoomInRange(target, zoom) {
   if (!target) return true;
-  const min = Number.isFinite(target.zoomMin) ? target.zoomMin : 0;
+  const min = Number.isFinite(target.zoomMin)
+    ? target.zoomMin
+    : Number.NEGATIVE_INFINITY;
   const maxValue = target.zoomMax == null ? Infinity : target.zoomMax;
   return zoom >= min && zoom <= maxValue;
 }

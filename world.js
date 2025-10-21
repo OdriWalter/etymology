@@ -1,6 +1,6 @@
 // world.js - defines the world grid, tile descriptors from the palette and carts
 
-const DEFAULT_ZOOM_MIN = 0;
+const DEFAULT_ZOOM_MIN = Number.NEGATIVE_INFINITY;
 const DEFAULT_ZOOM_MAX = null;
 
 export const DEFAULT_WORLD_SEED = 0x3d3d3d3d;
@@ -51,7 +51,13 @@ function resolveTile(palette, defaultTileId, tileId) {
 }
 
 function toZoomMin(value) {
-  return Number.isFinite(value) ? value : DEFAULT_ZOOM_MIN;
+  const numeric = typeof value === 'string' && value.trim() !== ''
+    ? Number(value)
+    : value;
+  if (numeric === Number.NEGATIVE_INFINITY) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return Number.isFinite(numeric) ? numeric : DEFAULT_ZOOM_MIN;
 }
 
 function toZoomMax(value) {
