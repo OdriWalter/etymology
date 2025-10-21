@@ -5,6 +5,7 @@ export class Camera {
     this.x = 0;
     this.y = 0;
     this.scale = 1;
+    this.baseScale = 1;
     this.minScale = 0.01;
     this.maxScale = Infinity;
   }
@@ -38,6 +39,12 @@ export class Camera {
     if (this.scale > this.maxScale) {
       this.scale = this.maxScale;
     }
+  }
+
+  getNormalizedZoom() {
+    const base = this.baseScale > 0 ? this.baseScale : 1;
+    const ratio = Math.max(this.scale / base, 1e-6);
+    return Math.log2(ratio);
   }
 }
 
@@ -97,6 +104,7 @@ export class Renderer {
     const scaleY = this.canvas.height / worldHeight;
     const scale = Math.min(scaleX, scaleY);
     this.camera.scale = scale;
+    this.camera.baseScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
     const minScale = Math.max(scale * 0.05, 1e-4);
     const maxScale = Math.max(scale * 40, minScale);
     this.camera.setScaleLimits(minScale, maxScale);
@@ -125,6 +133,10 @@ export class Renderer {
     const top = -this.camera.y / this.camera.scale;
     const width = this.canvas.width / this.camera.scale;
     const height = this.canvas.height / this.camera.scale;
+    const scale = this.camera.scale;
+    const zoom = typeof this.camera.getNormalizedZoom === 'function'
+      ? this.camera.getNormalizedZoom()
+      : Math.log2(Math.max(scale / (this.camera.baseScale > 0 ? this.camera.baseScale : 1), 1e-6));
     return {
       left,
       top,
@@ -132,7 +144,8 @@ export class Renderer {
       height,
       right: left + width,
       bottom: top + height,
-      zoom: this.camera.scale,
+      zoom,
+      scale,
       time: getTimeSeconds()
     };
   }
@@ -217,7 +230,7 @@ export class Renderer {
       if (!zoomInRange(feature, view.zoom)) continue;
       const style = feature.style || {};
       const strokeStyle = style.strokeStyle || 'rgba(0,0,0,0.6)';
-      const lineWidth = Number.isFinite(style.lineWidth) ? style.lineWidth : (1 / clamp(view.zoom, 1, Infinity));
+      const lineWidth = Number.isFinite(style.lineWidth) ? style.lineWidth : (1 / clamp(view.scale, 1, Infinity));
       const fillStyle = style.fillStyle;
       if (feature.poly && feature.poly.length >= 3) {
         ctx.save();
