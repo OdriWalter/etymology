@@ -296,6 +296,7 @@ export class World {
     const rows = [];
     const rowDenom = Math.max(1, this.gridRows - 1);
     const colDenom = Math.max(1, this.gridCols - 1);
+    const paletteCount = paletteIds.length;
 
     for (let r = 0; r < this.gridRows; r++) {
       const rowGradient = r / rowDenom;
@@ -317,7 +318,44 @@ export class World {
           currentIndex = Math.min(paletteIds.length - 1, Math.max(0, Math.round(blended)));
         }
 
-        row.push(paletteIds[currentIndex]);
+        let candidateIndex = currentIndex;
+        let candidateId = paletteIds[candidateIndex];
+        const forbidden = new Set();
+        if (row.length > 0) {
+          forbidden.add(row[row.length - 1]);
+        }
+        if (r > 0) {
+          const prevRow = rows[r - 1];
+          if (prevRow && prevRow.length > c) {
+            forbidden.add(prevRow[c]);
+          }
+        }
+
+        if (forbidden.has(candidateId) && paletteCount > forbidden.size) {
+          for (let offset = 1; offset < paletteCount; offset++) {
+            const forward = candidateIndex + offset;
+            if (forward < paletteCount) {
+              const forwardId = paletteIds[forward];
+              if (!forbidden.has(forwardId)) {
+                candidateIndex = forward;
+                candidateId = forwardId;
+                break;
+              }
+            }
+            const backward = candidateIndex - offset;
+            if (backward >= 0) {
+              const backwardId = paletteIds[backward];
+              if (!forbidden.has(backwardId)) {
+                candidateIndex = backward;
+                candidateId = backwardId;
+                break;
+              }
+            }
+          }
+          currentIndex = candidateIndex;
+        }
+
+        row.push(candidateId);
       }
       rows.push(row);
     }
