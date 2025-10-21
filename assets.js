@@ -54,12 +54,14 @@ function buildPaletteLUT(data) {
     ? data.defaultTile
     : tiles[0].key;
   const defaultTileId = byKey[fallbackKey].id;
+  const colors = data.colors ? { ...data.colors } : {};
   return {
     tiles,
     byKey,
     byId,
     defaultTileKey: fallbackKey,
-    defaultTileId
+    defaultTileId,
+    colors
   };
 }
 
@@ -114,7 +116,106 @@ function decodeRLE(rle, expected) {
   return pixels;
 }
 
-function expandGlyph(definition) {
+function toRGBA(color) {
+  if (!color) return null;
+  if (typeof color === 'string' && color.startsWith('rgba')) {
+    const match = color.match(/rgba?\s*\(([^)]+)\)/i);
+    if (!match) return null;
+    const parts = match[1].split(',').map(part => Number(part.trim()));
+    if (parts.length < 3) return null;
+    const [r, g, b] = parts;
+    const a = parts.length >= 4 ? Math.round(parts[3] * 255) : 255;
+    return { r, g, b, a };
+  }
+  return parseHexColor(color);
+}
+
+function blendTowards(target, source, factor) {
+  return Math.round(target + (source - target) * factor);
+}
+
+function applyNorthWestHighlight(imageData, width, height, highlightColor) {
+  if (!highlightColor) return;
+  const highlight = toRGBA(highlightColor);
+  if (!highlight) return;
+  const clamp = (value) => Math.min(1, Math.max(0, value));
+  const maxX = Math.ceil(width * 0.6);
+  const maxY = Math.ceil(height * 0.6);
+  for (let y = 0; y < maxY; y++) {
+    const vy = 1 - y / maxY;
+    for (let x = 0; x < maxX; x++) {
+      const offset = (y * width + x) * 4;
+      const alpha = imageData.data[offset + 3];
+      if (alpha === 0) continue;
+      const vx = 1 - x / maxX;
+      const weight = clamp(0.15 + 0.45 * vx * vy);
+      imageData.data[offset] = blendTowards(imageData.data[offset], highlight.r, weight);
+      imageData.data[offset + 1] = blendTowards(imageData.data[offset + 1], highlight.g, weight);
+      imageData.data[offset + 2] = blendTowards(imageData.data[offset + 2], highlight.b, weight);
+    }
+  }
+}
+
+function expandGlyphArray(definition, paletteColors) {
+  const width = definition.w ?? definition.width;
+  const height = definition.h ?? definition.height;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    throw new Error('Glyph definition missing dimensions');
+  }
+  const rows = Array.isArray(definition.rle) ? definition.rle : [];
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(width, height);
+  const colorLookup = paletteColors || {};
+  for (let y = 0; y < height; y++) {
+    const row = rows[y] || [];
+    let x = 0;
+    for (let i = 0; i < row.length && x < width; i += 2) {
+      const colorKey = row[i];
+      const count = Number(row[i + 1]) || 0;
+      const colorValue = colorKey === '0' ? null : colorLookup[colorKey] || colorKey;
+      const rgba = colorValue ? toRGBA(colorValue) : null;
+      for (let n = 0; n < count && x < width; n++, x++) {
+        const offset = (y * width + x) * 4;
+        if (!rgba) {
+          imageData.data[offset] = 0;
+          imageData.data[offset + 1] = 0;
+          imageData.data[offset + 2] = 0;
+          imageData.data[offset + 3] = 0;
+        } else {
+          imageData.data[offset] = rgba.r;
+          imageData.data[offset + 1] = rgba.g;
+          imageData.data[offset + 2] = rgba.b;
+          imageData.data[offset + 3] = rgba.a;
+        }
+      }
+    }
+    while (x < width) {
+      const offset = (y * width + x) * 4;
+      imageData.data[offset] = 0;
+      imageData.data[offset + 1] = 0;
+      imageData.data[offset + 2] = 0;
+      imageData.data[offset + 3] = 0;
+      x++;
+    }
+  }
+  applyNorthWestHighlight(imageData, width, height, paletteColors?.landLight);
+  ctx.putImageData(imageData, 0, 0);
+  return {
+    key: definition.key,
+    name: definition.name,
+    width,
+    height,
+    canvas
+  };
+}
+
+function expandGlyph(definition, paletteColors) {
+  if (Array.isArray(definition.rle)) {
+    return expandGlyphArray(definition, paletteColors);
+  }
   const { width, height, palette = [], rle } = definition;
   const pixelCount = width * height;
   const pixels = decodeRLE(rle, pixelCount);
@@ -134,11 +235,11 @@ function expandGlyph(definition) {
       imageData.data[offset + 3] = 0;
       continue;
     }
-    const { r, g, b, a } = parseHexColor(color);
-    imageData.data[offset] = r;
-    imageData.data[offset + 1] = g;
-    imageData.data[offset + 2] = b;
-    imageData.data[offset + 3] = a;
+    const rgba = toRGBA(color);
+    imageData.data[offset] = rgba.r;
+    imageData.data[offset + 1] = rgba.g;
+    imageData.data[offset + 2] = rgba.b;
+    imageData.data[offset + 3] = rgba.a;
   }
   ctx.putImageData(imageData, 0, 0);
   return {
@@ -148,14 +249,14 @@ function expandGlyph(definition) {
   };
 }
 
-function buildGlyphRegistry(data) {
+function buildGlyphRegistry(data, paletteColors) {
   const glyphs = {};
   const list = [];
   for (const def of data.glyphs || []) {
     if (!def.key) {
       throw new Error('Glyph definition missing key');
     }
-    const expanded = expandGlyph(def);
+    const expanded = expandGlyph(def, paletteColors);
     glyphs[def.key] = expanded;
     list.push(expanded);
   }
@@ -232,7 +333,7 @@ export async function loadAssets(options = {}) {
   }
 
   const palette = buildPaletteLUT(paletteJson);
-  const glyphs = buildGlyphRegistry(glyphJson);
+  const glyphs = buildGlyphRegistry(glyphJson, palette.colors);
   logAssetSummary(palette, glyphs, source);
   return { palette, glyphs };
 }
