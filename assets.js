@@ -4,6 +4,32 @@ import embeddedGlyphData from './data/glyphsData.js';
 const PALETTE_PATH = './data/palette.json';
 const GLYPHS_PATH = './data/glyphs.json';
 
+const CARDINAL_DIRECTIONS = ['north', 'south', 'east', 'west'];
+
+function normaliseTransitions(rawTransitions, byKey) {
+  if (!rawTransitions || typeof rawTransitions !== 'object') {
+    return null;
+  }
+  const resolved = {};
+  for (const [neighborKey, definition] of Object.entries(rawTransitions)) {
+    const neighborTile = byKey[neighborKey];
+    if (!neighborTile || !definition || typeof definition !== 'object') {
+      continue;
+    }
+    const entries = {};
+    for (const direction of CARDINAL_DIRECTIONS) {
+      const glyphKey = definition[direction];
+      if (typeof glyphKey === 'string' && glyphKey.trim().length > 0) {
+        entries[direction] = glyphKey;
+      }
+    }
+    if (Object.keys(entries).length > 0) {
+      resolved[neighborTile.id] = entries;
+    }
+  }
+  return Object.keys(resolved).length > 0 ? resolved : null;
+}
+
 function buildPaletteLUT(data) {
   const tiles = (data.tiles || []).map((tile, index) => {
     const assignedId = tile.id != null ? tile.id : index;
@@ -20,6 +46,9 @@ function buildPaletteLUT(data) {
     }
     byKey[tile.key] = tile;
     byId[tile.id] = tile;
+  }
+  for (const tile of tiles) {
+    tile.edgeTransitions = normaliseTransitions(tile.transitions, byKey);
   }
   const fallbackKey = data.defaultTile && byKey[data.defaultTile]
     ? data.defaultTile

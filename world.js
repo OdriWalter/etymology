@@ -89,6 +89,13 @@ function cloneGrid(grid) {
   return grid.map(row => row.slice());
 }
 
+const CARDINAL_NEIGHBOURS = [
+  { direction: 'north', dr: -1, dc: 0 },
+  { direction: 'south', dr: 1, dc: 0 },
+  { direction: 'west', dr: 0, dc: -1 },
+  { direction: 'east', dr: 0, dc: 1 }
+];
+
 // Cart class with a polyline path and simple linear motion
 export class Cart {
   constructor(id) {
@@ -203,6 +210,7 @@ export class World {
     this.gridRows = rows;
     this.bounds = { ...bounds };
     this.grid = [];
+    this.terrainAdjacency = [];
     this._agents = [];
     this.cartAgents = [];
     this.carts = this.cartAgents;
@@ -220,7 +228,8 @@ export class World {
           defaultTileId: this.defaultTileId,
           seed: this.seed
         },
-        grid: []
+        grid: [],
+        adjacency: []
       },
       vector: {
         zoomMin: DEFAULT_ZOOM_MIN,
@@ -239,6 +248,7 @@ export class World {
       }
     };
     this.layers.terrain.grid = this.grid;
+    this.layers.terrain.adjacency = this.terrainAdjacency;
     this.regenerateTerrain();
   }
 
@@ -270,6 +280,8 @@ export class World {
     if (paletteIds.length === 0) {
       this.grid = [];
       this.layers.terrain.grid = this.grid;
+      this.terrainAdjacency = [];
+      this.layers.terrain.adjacency = this.terrainAdjacency;
       this._syncTerrainParams();
       return;
     }
@@ -312,6 +324,7 @@ export class World {
 
     this.grid = rows;
     this.layers.terrain.grid = this.grid;
+    this._recalculateAllAdjacency();
     this._syncTerrainParams();
   }
 
@@ -322,6 +335,7 @@ export class World {
     this.palette = palette;
     this.defaultTileId = palette.defaultTileId;
     this._syncTerrainParams();
+    this._recalculateAllAdjacency();
   }
 
   get width() {
@@ -351,6 +365,7 @@ export class World {
     const row = Math.floor((ny - this.bounds.minY) / this.cellHeight);
     if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return;
     this.grid[row][col] = tileId;
+    this._recalculateAdjacencyAround(row, col);
   }
 
   addCart() {
@@ -419,6 +434,73 @@ export class World {
       defaultTileId: this.defaultTileId,
       seed: this.seed
     };
+  }
+
+  _ensureAdjacencyGrid() {
+    const needsRebuild = !Array.isArray(this.terrainAdjacency)
+      || this.terrainAdjacency.length !== this.gridRows
+      || this.terrainAdjacency.some(row => !Array.isArray(row) || row.length !== this.gridCols);
+    if (needsRebuild) {
+      this.terrainAdjacency = Array.from({ length: this.gridRows }, () => new Array(this.gridCols).fill(null));
+      if (this.layers?.terrain) {
+        this.layers.terrain.adjacency = this.terrainAdjacency;
+      }
+    }
+  }
+
+  _recalculateAdjacencyAt(row, col) {
+    if (row < 0 || row >= this.gridRows || col < 0 || col >= this.gridCols) {
+      return;
+    }
+    this._ensureAdjacencyGrid();
+    const tileId = this.grid[row]?.[col];
+    if (tileId == null) {
+      this.terrainAdjacency[row][col] = null;
+      return;
+    }
+    const tile = this.getTileDescriptor(tileId);
+    const transitions = tile?.edgeTransitions;
+    if (!transitions) {
+      this.terrainAdjacency[row][col] = null;
+      return;
+    }
+    const overlays = [];
+    for (const neighbour of CARDINAL_NEIGHBOURS) {
+      const nRow = row + neighbour.dr;
+      const nCol = col + neighbour.dc;
+      if (nRow < 0 || nRow >= this.gridRows || nCol < 0 || nCol >= this.gridCols) {
+        continue;
+      }
+      const neighbourId = this.grid[nRow]?.[nCol];
+      if (neighbourId == null) {
+        continue;
+      }
+      const mapping = transitions[neighbourId];
+      if (!mapping) {
+        continue;
+      }
+      const glyphKey = mapping[neighbour.direction];
+      if (typeof glyphKey === 'string' && glyphKey.length > 0) {
+        overlays.push({ direction: neighbour.direction, glyph: glyphKey });
+      }
+    }
+    this.terrainAdjacency[row][col] = overlays.length > 0 ? overlays : null;
+  }
+
+  _recalculateAdjacencyAround(row, col) {
+    this._recalculateAdjacencyAt(row, col);
+    for (const neighbour of CARDINAL_NEIGHBOURS) {
+      this._recalculateAdjacencyAt(row + neighbour.dr, col + neighbour.dc);
+    }
+  }
+
+  _recalculateAllAdjacency() {
+    this._ensureAdjacencyGrid();
+    for (let r = 0; r < this.gridRows; r++) {
+      for (let c = 0; c < this.gridCols; c++) {
+        this._recalculateAdjacencyAt(r, c);
+      }
+    }
   }
 
   _resetAgents() {
@@ -636,6 +718,7 @@ export class World {
       }
       this.layers.terrain.grid = this.grid;
       this._syncTerrainParams();
+      this._recalculateAllAdjacency();
     }
 
     const convertPoint = (pt) => {
