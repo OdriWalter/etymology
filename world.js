@@ -1,5 +1,8 @@
 // world.js - defines the world grid, tile descriptors from the palette and carts
 
+const DEFAULT_ZOOM_MIN = 0;
+const DEFAULT_ZOOM_MAX = null;
+
 function resolveTile(palette, defaultTileId, tileId) {
   if (!palette) return null;
   const resolved = palette.byId[tileId];
@@ -7,18 +10,70 @@ function resolveTile(palette, defaultTileId, tileId) {
   return palette.byId[defaultTileId];
 }
 
+function toZoomMin(value) {
+  return Number.isFinite(value) ? value : DEFAULT_ZOOM_MIN;
+}
+
+function toZoomMax(value) {
+  return Number.isFinite(value) ? value : DEFAULT_ZOOM_MAX;
+}
+
+function clonePoint(pt) {
+  return { x: pt.x, y: pt.y };
+}
+
+function normalisePoint(point, clamp, convertLegacy) {
+  if (!point) {
+    return clamp(convertLegacy({ x: 0.5, y: 0.5 }));
+  }
+  if (Array.isArray(point) && point.length >= 2) {
+    return clamp(convertLegacy({ x: Number(point[0]), y: Number(point[1]) }));
+  }
+  if (typeof point === 'object') {
+    return clamp(convertLegacy({ x: Number(point.x), y: Number(point.y) }));
+  }
+  return clamp(convertLegacy({ x: 0.5, y: 0.5 }));
+}
+
+function mapPolyline(points, clamp, convertLegacy, minPoints = 2) {
+  if (!Array.isArray(points)) return null;
+  const out = [];
+  for (const pt of points) {
+    const converted = normalisePoint(pt, clamp, convertLegacy);
+    out.push(converted);
+  }
+  return out.length >= minPoints ? out : null;
+}
+
+function cloneGrid(grid) {
+  return grid.map(row => row.slice());
+}
+
 // Cart class with a polyline path and simple linear motion
 export class Cart {
   constructor(id) {
     this.id = id;
+    this.type = 'cart';
     this.path = [];
-    this.position = { x: 0, y: 0 }; // normalised world coordinates (0-1)
-    this.speed = 0.1; // normalised units per second; world adjusts when adding
-    this.progress = 0; // distance travelled along the polyline
+    this.position = { x: 0, y: 0 }; // world coordinates
+    this.speed = 0.1; // world units per second
+    this.progress = 0;
     this.loop = true;
     this.selected = false;
     this.segments = null;
     this.totalLength = 0;
+    this.spriteKey = 'cart';
+    this.spriteScale = null;
+    this.spriteAnchor = null;
+    this.spriteRotation = 0;
+    this.zoomMin = DEFAULT_ZOOM_MIN;
+    this.zoomMax = DEFAULT_ZOOM_MAX;
+    this.pathZoomMin = DEFAULT_ZOOM_MIN;
+    this.pathZoomMax = DEFAULT_ZOOM_MAX;
+    this.pathColor = 'rgba(0,0,0,0.6)';
+    this.pathWidth = null;
+    this.effect = null;
+    this.phase = 0;
   }
 
   computeSegments() {
@@ -38,11 +93,9 @@ export class Cart {
 
   update(dt) {
     if (this.path.length < 2 || this.segments === null) return;
-    // advance along the path
     this.progress += this.speed * dt;
     const total = this.totalLength;
     if (total <= 0) return;
-    // wrap progress if looping
     if (this.progress >= total) {
       if (this.loop) {
         this.progress = this.progress % total;
@@ -53,7 +106,6 @@ export class Cart {
         this.progress = total - 0.0001;
       }
     }
-    // find segment
     let dist = this.progress;
     for (const seg of this.segments) {
       if (dist <= seg.length) {
@@ -67,6 +119,43 @@ export class Cart {
   }
 }
 
+function serialiseZoom(value) {
+  return value == null || value === DEFAULT_ZOOM_MAX ? null : value;
+}
+
+function normaliseScale(scale) {
+  if (scale == null) return null;
+  if (typeof scale === 'number' && Number.isFinite(scale)) {
+    return scale;
+  }
+  if (typeof scale === 'object') {
+    const sx = Number(scale.x);
+    const sy = Number(scale.y);
+    return {
+      x: Number.isFinite(sx) ? sx : undefined,
+      y: Number.isFinite(sy) ? sy : undefined
+    };
+  }
+  return null;
+}
+
+function normaliseAnchor(anchor) {
+  if (!anchor) return null;
+  const ax = Number(anchor.x);
+  const ay = Number(anchor.y);
+  return {
+    x: Number.isFinite(ax) ? ax : 0.5,
+    y: Number.isFinite(ay) ? ay : 0.5
+  };
+}
+
+function pointWithinBounds(bounds, point) {
+  return {
+    x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
+    y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y))
+  };
+}
+
 // World class to hold tiles and carts
 export class World {
   constructor(cols, rows, palette, bounds = { minX: 0, minY: 0, maxX: 1, maxY: 1 }) {
@@ -74,7 +163,33 @@ export class World {
     this.gridRows = rows;
     this.bounds = { ...bounds };
     this.setPalette(palette);
-    // 2D grid initialised to default tile
+    this.layers = {
+      terrain: {
+        zoomMin: DEFAULT_ZOOM_MIN,
+        zoomMax: DEFAULT_ZOOM_MAX,
+        params: {
+          gridCols: cols,
+          gridRows: rows,
+          defaultTileId: this.defaultTileId
+        },
+        grid: []
+      },
+      vector: {
+        zoomMin: DEFAULT_ZOOM_MIN,
+        zoomMax: DEFAULT_ZOOM_MAX,
+        features: []
+      },
+      sprite: {
+        zoomMin: DEFAULT_ZOOM_MIN,
+        zoomMax: DEFAULT_ZOOM_MAX,
+        placements: []
+      },
+      effect: {
+        zoomMin: DEFAULT_ZOOM_MIN,
+        zoomMax: DEFAULT_ZOOM_MAX,
+        agents: []
+      }
+    };
     this.grid = [];
     for (let r = 0; r < rows; r++) {
       const row = [];
@@ -83,7 +198,11 @@ export class World {
       }
       this.grid.push(row);
     }
-    this.carts = [];
+    this.layers.terrain.grid = this.grid;
+    this._agents = [];
+    this.layers.effect.agents = this._agents;
+    this.cartAgents = [];
+    this.carts = this.cartAgents;
     this.nextCartId = 1;
   }
 
@@ -93,6 +212,13 @@ export class World {
     }
     this.palette = palette;
     this.defaultTileId = palette.defaultTileId;
+    if (this.layers && this.layers.terrain) {
+      this.layers.terrain.params = {
+        gridCols: this.gridCols,
+        gridRows: this.gridRows,
+        defaultTileId: this.defaultTileId
+      };
+    }
   }
 
   get width() {
@@ -112,9 +238,7 @@ export class World {
   }
 
   clampToBounds(x, y) {
-    const clampedX = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, x));
-    const clampedY = Math.min(this.bounds.maxY, Math.max(this.bounds.minY, y));
-    return { x: clampedX, y: clampedY };
+    return pointWithinBounds(this.bounds, { x, y });
   }
 
   paintTile(nx, ny, tileId) {
@@ -128,22 +252,22 @@ export class World {
 
   addCart() {
     const cart = new Cart(this.nextCartId++);
-    // set initial position to centre of bounds
     cart.position = {
       x: this.bounds.minX + this.width / 2,
       y: this.bounds.minY + this.height / 2
     };
-    cart.speed = 5 / this.gridCols; // preserve legacy tiles-per-second default
-    this.carts.push(cart);
+    cart.speed = 5 / this.gridCols;
+    cart.phase = cart.id * 0.37;
+    this.cartAgents.push(cart);
+    this._agents.push(cart);
     return cart;
   }
 
-  // Select a cart near the world coordinates (normalised units)
   selectCartAt(wx, wy) {
     let selected = null;
     const selectionRadius = Math.min(this.cellWidth, this.cellHeight) * 0.75;
     let minDistSq = selectionRadius * selectionRadius;
-    for (const cart of this.carts) {
+    for (const cart of this.cartAgents) {
       const dx = cart.position.x - wx;
       const dy = cart.position.y - wy;
       const d = dx * dx + dy * dy;
@@ -153,7 +277,7 @@ export class World {
       }
     }
     if (selected) {
-      this.carts.forEach(c => c.selected = false);
+      this.cartAgents.forEach(c => c.selected = false);
       selected.selected = true;
       return selected;
     }
@@ -161,11 +285,11 @@ export class World {
   }
 
   get selectedCart() {
-    return this.carts.find(c => c.selected);
+    return this.cartAgents.find(c => c.selected);
   }
 
   update(dt) {
-    for (const cart of this.carts) {
+    for (const cart of this.cartAgents) {
       cart.update(dt);
     }
   }
@@ -174,39 +298,216 @@ export class World {
     return resolveTile(this.palette, this.defaultTileId, tileId);
   }
 
-  // Serialize world to plain object
+  _normaliseZoomMin(value) {
+    return toZoomMin(value);
+  }
+
+  _normaliseZoomMax(value) {
+    return toZoomMax(value);
+  }
+
+  _syncTerrainParams() {
+    this.layers.terrain.params = {
+      gridCols: this.gridCols,
+      gridRows: this.gridRows,
+      defaultTileId: this.defaultTileId
+    };
+  }
+
+  _resetAgents() {
+    this._agents = [];
+    this.layers.effect.agents = this._agents;
+    this.cartAgents = [];
+    this.carts = this.cartAgents;
+    this.nextCartId = 1;
+  }
+
+  _applyCartData(cart, data, convertPoint, isLegacy) {
+    const path = Array.isArray(data.path) ? mapPolyline(data.path, p => this.clampToBounds(p.x, p.y), convertPoint) : null;
+    cart.path = path ? path : [];
+    cart.position = normalisePoint(data.position, (p) => this.clampToBounds(p.x, p.y), convertPoint);
+    cart.speed = isLegacy && typeof data.speed === 'number'
+      ? data.speed / this.gridCols
+      : (typeof data.speed === 'number' ? data.speed : cart.speed);
+    cart.progress = isLegacy ? 0 : (typeof data.progress === 'number' ? data.progress : 0);
+    cart.loop = data.loop !== undefined ? data.loop : cart.loop;
+    cart.spriteKey = data.spriteKey || data.glyph || cart.spriteKey;
+    cart.spriteScale = normaliseScale(data.spriteScale ?? data.spriteSize ?? data.scale);
+    cart.spriteAnchor = normaliseAnchor(data.spriteAnchor);
+    cart.spriteRotation = Number.isFinite(data.spriteRotation) ? data.spriteRotation : cart.spriteRotation;
+    cart.zoomMin = this._normaliseZoomMin(data.zoomMin);
+    cart.zoomMax = this._normaliseZoomMax(data.zoomMax);
+    cart.pathZoomMin = this._normaliseZoomMin(data.pathZoomMin ?? data.zoomMin);
+    cart.pathZoomMax = this._normaliseZoomMax(data.pathZoomMax ?? data.zoomMax);
+    cart.pathColor = typeof data.pathColor === 'string' ? data.pathColor : cart.pathColor;
+    cart.pathWidth = Number.isFinite(data.pathWidth) ? data.pathWidth : cart.pathWidth;
+    cart.effect = data.effect || cart.effect;
+    cart.phase = Number.isFinite(data.phase) ? data.phase : cart.phase;
+    if (cart.path.length >= 2) {
+      cart.computeSegments();
+      if (!isLegacy && cart.progress > 0) {
+        cart.progress = Math.min(cart.totalLength, cart.progress);
+        cart.update(0);
+      } else {
+        cart.progress = 0;
+        cart.update(0);
+      }
+    }
+  }
+
+  _createEffectAgent(def, convertPoint) {
+    const agent = {
+      id: def.id,
+      type: def.type || 'effect',
+      effect: def.effect || def.type || 'cloudNoise',
+      position: normalisePoint(def.position, (p) => this.clampToBounds(p.x, p.y), convertPoint),
+      zoomMin: this._normaliseZoomMin(def.zoomMin),
+      zoomMax: this._normaliseZoomMax(def.zoomMax),
+      radius: Number.isFinite(def.radius) ? def.radius : Math.min(this.width, this.height) * 0.1,
+      amplitude: Number.isFinite(def.amplitude) ? def.amplitude : Math.min(this.cellWidth, this.cellHeight),
+      spriteKey: def.spriteKey || null,
+      spriteScale: normaliseScale(def.spriteScale),
+      spriteAnchor: normaliseAnchor(def.spriteAnchor),
+      spriteRotation: Number.isFinite(def.spriteRotation) ? def.spriteRotation : 0,
+      phase: Number.isFinite(def.phase) ? def.phase : 0,
+      speed: Number.isFinite(def.speed) ? def.speed : 1,
+      seed: Number.isFinite(def.seed) ? def.seed : undefined,
+      opacity: Number.isFinite(def.opacity) ? def.opacity : undefined
+    };
+    this._agents.push(agent);
+    return agent;
+  }
+
   serialize() {
+    const terrainGrid = cloneGrid(this.grid);
+    const serializeFeatures = (features) => features.map((feature) => {
+      const payload = { ...feature };
+      if (feature.line) {
+        payload.line = feature.line.map(clonePoint);
+      }
+      if (feature.poly) {
+        payload.poly = feature.poly.map(clonePoint);
+      }
+      payload.zoomMin = feature.zoomMin ?? DEFAULT_ZOOM_MIN;
+      payload.zoomMax = serialiseZoom(feature.zoomMax);
+      if (feature.style) {
+        payload.style = { ...feature.style };
+      }
+      return payload;
+    });
+    const serializePlacements = (placements) => placements.map((placement) => {
+      const payload = { ...placement };
+      payload.position = clonePoint(placement.position);
+      payload.zoomMin = placement.zoomMin ?? DEFAULT_ZOOM_MIN;
+      payload.zoomMax = serialiseZoom(placement.zoomMax);
+      if (placement.scale && typeof placement.scale === 'object') {
+        payload.scale = { ...placement.scale };
+      }
+      if (placement.anchor) {
+        payload.anchor = { ...placement.anchor };
+      }
+      return payload;
+    });
+    const serializeAgents = () => this._agents.map((agent) => {
+      if (agent.type === 'cart' || agent instanceof Cart) {
+        return {
+          type: 'cart',
+          id: agent.id,
+          path: agent.path.map(clonePoint),
+          position: clonePoint(agent.position),
+          speed: agent.speed,
+          progress: agent.progress,
+          loop: agent.loop,
+          spriteKey: agent.spriteKey,
+          spriteScale: agent.spriteScale,
+          spriteAnchor: agent.spriteAnchor,
+          spriteRotation: agent.spriteRotation,
+          zoomMin: agent.zoomMin ?? DEFAULT_ZOOM_MIN,
+          zoomMax: serialiseZoom(agent.zoomMax),
+          pathZoomMin: agent.pathZoomMin ?? DEFAULT_ZOOM_MIN,
+          pathZoomMax: serialiseZoom(agent.pathZoomMax),
+          pathColor: agent.pathColor,
+          pathWidth: agent.pathWidth,
+          effect: agent.effect,
+          phase: agent.phase
+        };
+      }
+      const payload = { ...agent };
+      payload.position = clonePoint(agent.position);
+      payload.zoomMin = agent.zoomMin ?? DEFAULT_ZOOM_MIN;
+      payload.zoomMax = serialiseZoom(agent.zoomMax);
+      payload.radius = Number.isFinite(agent.radius) ? agent.radius : undefined;
+      payload.amplitude = Number.isFinite(agent.amplitude) ? agent.amplitude : undefined;
+      if (payload.spriteScale && typeof payload.spriteScale === 'object') {
+        payload.spriteScale = { ...payload.spriteScale };
+      }
+      if (payload.spriteAnchor) {
+        payload.spriteAnchor = { ...payload.spriteAnchor };
+      }
+      return payload;
+    });
+
     return {
       bounds: { ...this.bounds },
       gridCols: this.gridCols,
       gridRows: this.gridRows,
-      // include legacy keys for backwards compatibility
       cols: this.gridCols,
       rows: this.gridRows,
-      grid: this.grid,
-      carts: this.carts.map(c => ({
-        id: c.id,
-        path: c.path.map(p => ({ x: p.x, y: p.y })),
-        position: { x: c.position.x, y: c.position.y },
-        speed: c.speed,
-        progress: c.progress,
-        loop: c.loop
-      }))
+      grid: terrainGrid,
+      carts: this.cartAgents.map((cart) => ({
+        id: cart.id,
+        path: cart.path.map(clonePoint),
+        position: clonePoint(cart.position),
+        speed: cart.speed,
+        progress: cart.progress,
+        loop: cart.loop
+      })),
+      layers: {
+        terrain: {
+          zoomMin: this.layers.terrain.zoomMin ?? DEFAULT_ZOOM_MIN,
+          zoomMax: serialiseZoom(this.layers.terrain.zoomMax),
+          params: {
+            gridCols: this.gridCols,
+            gridRows: this.gridRows,
+            defaultTileId: this.defaultTileId
+          },
+          grid: terrainGrid
+        },
+        vector: {
+          zoomMin: this.layers.vector.zoomMin ?? DEFAULT_ZOOM_MIN,
+          zoomMax: serialiseZoom(this.layers.vector.zoomMax),
+          features: serializeFeatures(this.layers.vector.features)
+        },
+        sprite: {
+          zoomMin: this.layers.sprite.zoomMin ?? DEFAULT_ZOOM_MIN,
+          zoomMax: serialiseZoom(this.layers.sprite.zoomMax),
+          placements: serializePlacements(this.layers.sprite.placements)
+        },
+        effect: {
+          zoomMin: this.layers.effect.zoomMin ?? DEFAULT_ZOOM_MIN,
+          zoomMax: serialiseZoom(this.layers.effect.zoomMax),
+          agents: serializeAgents()
+        }
+      }
     };
   }
 
-  // Load world from plain object
   deserialize(data) {
-    const cols = data.gridCols ?? data.cols ?? this.gridCols;
-    const rows = data.gridRows ?? data.rows ?? this.gridRows;
+    const cols = data.layers?.terrain?.params?.gridCols ?? data.gridCols ?? data.cols ?? this.gridCols;
+    const rows = data.layers?.terrain?.params?.gridRows ?? data.gridRows ?? data.rows ?? this.gridRows;
     this.gridCols = cols;
     this.gridRows = rows;
     this.bounds = data.bounds ? { ...data.bounds } : { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    this._syncTerrainParams();
 
     const legacyTileSize = data.tileSize;
     const isLegacy = legacyTileSize !== undefined && !data.bounds;
 
-    const incomingGrid = Array.isArray(data.grid) ? data.grid : [];
+    const terrainLayer = data.layers?.terrain ?? {};
+    this.layers.terrain.zoomMin = this._normaliseZoomMin(terrainLayer.zoomMin);
+    this.layers.terrain.zoomMax = this._normaliseZoomMax(terrainLayer.zoomMax);
+
+    const incomingGrid = Array.isArray(terrainLayer.grid) ? terrainLayer.grid : (Array.isArray(data.grid) ? data.grid : []);
     this.grid = [];
     for (let r = 0; r < this.gridRows; r++) {
       const sourceRow = incomingGrid[r] || [];
@@ -217,44 +518,169 @@ export class World {
       }
       this.grid.push(row);
     }
+    this.layers.terrain.grid = this.grid;
 
-    this.carts = [];
-    this.nextCartId = 1;
-    const carts = Array.isArray(data.carts) ? data.carts : [];
-    for (const cd of carts) {
-      const id = cd.id ?? this.nextCartId++;
-      const cart = new Cart(id);
-      cart.speed = 5 / this.gridCols;
-      const convertPoint = (pt) => {
-        if (!pt) return { x: this.bounds.minX + this.width / 2, y: this.bounds.minY + this.height / 2 };
-        if (isLegacy) {
-          return {
-            x: this.bounds.minX + (pt.x / this.gridCols) * this.width,
-            y: this.bounds.minY + (pt.y / this.gridRows) * this.height
-          };
-        }
-        return { x: pt.x, y: pt.y };
-      };
+    const convertPoint = (pt) => {
+      if (!pt) {
+        return {
+          x: this.bounds.minX + this.width / 2,
+          y: this.bounds.minY + this.height / 2
+        };
+      }
+      let point;
+      if (Array.isArray(pt) && pt.length >= 2) {
+        point = { x: Number(pt[0]), y: Number(pt[1]) };
+      } else if (typeof pt === 'object') {
+        point = { x: Number(pt.x), y: Number(pt.y) };
+      } else {
+        point = { x: 0.5, y: 0.5 };
+      }
+      if (isLegacy) {
+        return {
+          x: this.bounds.minX + (point.x / this.gridCols) * this.width,
+          y: this.bounds.minY + (point.y / this.gridRows) * this.height
+        };
+      }
+      return point;
+    };
 
-      cart.path = Array.isArray(cd.path) ? cd.path.map(convertPoint) : [];
-      cart.position = convertPoint(cd.position);
-      cart.speed = isLegacy && typeof cd.speed === 'number'
-        ? cd.speed / this.gridCols
-        : (typeof cd.speed === 'number' ? cd.speed : cart.speed);
-      cart.progress = isLegacy ? 0 : (typeof cd.progress === 'number' ? cd.progress : 0);
-      cart.loop = cd.loop !== undefined ? cd.loop : cart.loop;
-      if (cart.path.length >= 2) {
-        cart.computeSegments();
-        if (!isLegacy && cart.progress > 0) {
-          cart.progress = Math.min(cart.totalLength, cart.progress);
-          cart.update(0);
+    const vectorLayer = data.layers?.vector ?? {};
+    this.layers.vector.zoomMin = this._normaliseZoomMin(vectorLayer.zoomMin);
+    this.layers.vector.zoomMax = this._normaliseZoomMax(vectorLayer.zoomMax);
+    const parsedFeatures = [];
+    if (Array.isArray(vectorLayer.features)) {
+      for (const feature of vectorLayer.features) {
+        const type = feature?.type || (feature?.poly ? 'polygon' : 'polyline');
+        const rawPoints = feature?.line || feature?.poly || feature?.points || feature?.path;
+        const requiredPoints = type === 'polygon' ? 3 : 2;
+        const mapped = mapPolyline(rawPoints, (p) => this.clampToBounds(p.x, p.y), convertPoint, requiredPoints);
+        if (!mapped) continue;
+        const stored = { ...feature };
+        if (type === 'polygon') {
+          stored.poly = mapped;
+          delete stored.line;
         } else {
-          cart.progress = 0;
-          cart.update(0);
+          stored.line = mapped;
+          delete stored.poly;
+        }
+        stored.zoomMin = this._normaliseZoomMin(feature.zoomMin);
+        stored.zoomMax = this._normaliseZoomMax(feature.zoomMax);
+        if (feature.style) {
+          stored.style = { ...feature.style };
+        }
+        parsedFeatures.push(stored);
+      }
+    }
+    this.layers.vector.features = parsedFeatures;
+
+    const spriteLayer = data.layers?.sprite ?? {};
+    this.layers.sprite.zoomMin = this._normaliseZoomMin(spriteLayer.zoomMin);
+    this.layers.sprite.zoomMax = this._normaliseZoomMax(spriteLayer.zoomMax);
+    const parsedPlacements = [];
+    if (Array.isArray(spriteLayer.placements)) {
+      for (const placement of spriteLayer.placements) {
+        if (!placement || !placement.glyph) continue;
+        const position = normalisePoint(placement.position, (p) => this.clampToBounds(p.x, p.y), convertPoint);
+        parsedPlacements.push({
+          ...placement,
+          position,
+          scale: normaliseScale(placement.scale ?? placement.spriteScale ?? placement.size),
+          anchor: normaliseAnchor(placement.anchor ?? placement.spriteAnchor),
+          zoomMin: this._normaliseZoomMin(placement.zoomMin),
+          zoomMax: this._normaliseZoomMax(placement.zoomMax)
+        });
+      }
+    }
+    this.layers.sprite.placements = parsedPlacements;
+
+    const effectLayer = data.layers?.effect ?? {};
+    this.layers.effect.zoomMin = this._normaliseZoomMin(effectLayer.zoomMin);
+    this.layers.effect.zoomMax = this._normaliseZoomMax(effectLayer.zoomMax);
+    this._resetAgents();
+    const agentDefs = Array.isArray(effectLayer.agents) ? effectLayer.agents : null;
+    if (agentDefs) {
+      for (const def of agentDefs) {
+        if (def?.type === 'cart') {
+          const id = def.id ?? this.nextCartId++;
+          const cart = new Cart(id);
+          this._applyCartData(cart, def, convertPoint, isLegacy);
+          this.cartAgents.push(cart);
+          this._agents.push(cart);
+          this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
+        } else {
+          this._createEffectAgent(def || {}, convertPoint);
         }
       }
-      this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
-      this.carts.push(cart);
     }
+
+    if (!agentDefs) {
+      const carts = Array.isArray(data.carts) ? data.carts : [];
+      for (const cd of carts) {
+        const id = cd.id ?? this.nextCartId++;
+        const cart = new Cart(id);
+        cart.speed = 5 / this.gridCols;
+        this._applyCartData(cart, cd, convertPoint, isLegacy);
+        this.cartAgents.push(cart);
+        this._agents.push(cart);
+        this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
+      }
+    }
+  }
+
+  getTerrainLayer() {
+    return this.layers.terrain;
+  }
+
+  getVectorLayer() {
+    const base = this.layers.vector;
+    const features = base.features.map(feature => feature);
+    for (const cart of this.cartAgents) {
+      if (cart.path.length < 2) continue;
+      features.push({
+        id: `cart-path-${cart.id}`,
+        type: 'polyline',
+        line: cart.path.map(clonePoint),
+        zoomMin: cart.pathZoomMin ?? base.zoomMin,
+        zoomMax: cart.pathZoomMax ?? base.zoomMax,
+        style: {
+          strokeStyle: cart.pathColor,
+          lineWidth: cart.pathWidth ?? Math.max(this.cellWidth, this.cellHeight) * 0.1
+        }
+      });
+    }
+    return {
+      zoomMin: base.zoomMin,
+      zoomMax: base.zoomMax,
+      features
+    };
+  }
+
+  getSpriteLayer() {
+    const base = this.layers.sprite;
+    const placements = base.placements.map(placement => placement);
+    for (const agent of this._agents) {
+      if (!agent || !agent.spriteKey) continue;
+      placements.push({
+        id: agent.id != null ? `agent-${agent.id}` : undefined,
+        glyph: agent.spriteKey,
+        position: clonePoint(agent.position),
+        scale: agent.spriteScale,
+        anchor: agent.spriteAnchor,
+        rotation: agent.spriteRotation,
+        zoomMin: agent.zoomMin ?? base.zoomMin,
+        zoomMax: agent.zoomMax ?? base.zoomMax,
+        priority: agent.priority,
+        agentRef: agent
+      });
+    }
+    return {
+      zoomMin: base.zoomMin,
+      zoomMax: base.zoomMax,
+      placements
+    };
+  }
+
+  getEffectLayer() {
+    return this.layers.effect;
   }
 }

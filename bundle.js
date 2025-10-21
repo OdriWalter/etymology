@@ -152,9 +152,92 @@
     return { palette, glyphs };
   }
 
+  const DEFAULT_ZOOM_MIN = 0;
+  const DEFAULT_ZOOM_MAX = null;
+
+  function resolveTile(palette, defaultTileId, tileId) {
+    if (!palette) return null;
+    const resolved = palette.byId[tileId];
+    if (resolved) return resolved;
+    return palette.byId[defaultTileId];
+  }
+
+  function toZoomMin(value) {
+    return Number.isFinite(value) ? value : DEFAULT_ZOOM_MIN;
+  }
+
+  function toZoomMax(value) {
+    return Number.isFinite(value) ? value : DEFAULT_ZOOM_MAX;
+  }
+
+  function clonePoint(pt) {
+    return { x: pt.x, y: pt.y };
+  }
+
+  function normalisePoint(point, clamp, convertLegacy) {
+    if (!point) {
+      return clamp(convertLegacy({ x: 0.5, y: 0.5 }));
+    }
+    if (Array.isArray(point) && point.length >= 2) {
+      return clamp(convertLegacy({ x: Number(point[0]), y: Number(point[1]) }));
+    }
+    if (typeof point === 'object') {
+      return clamp(convertLegacy({ x: Number(point.x), y: Number(point.y) }));
+    }
+    return clamp(convertLegacy({ x: 0.5, y: 0.5 }));
+  }
+
+  function mapPolyline(points, clamp, convertLegacy, minPoints = 2) {
+    if (!Array.isArray(points)) return null;
+    const out = [];
+    for (const pt of points) {
+      const converted = normalisePoint(pt, clamp, convertLegacy);
+      out.push(converted);
+    }
+    return out.length >= minPoints ? out : null;
+  }
+
+  function cloneGrid(grid) {
+    return grid.map(row => row.slice());
+  }
+
+  function normaliseScale(scale) {
+    if (scale == null) return null;
+    if (typeof scale === 'number' && Number.isFinite(scale)) {
+      return scale;
+    }
+    if (typeof scale === 'object') {
+      const sx = Number(scale.x);
+      const sy = Number(scale.y);
+      return {
+        x: Number.isFinite(sx) ? sx : undefined,
+        y: Number.isFinite(sy) ? sy : undefined
+      };
+    }
+    return null;
+  }
+
+  function normaliseAnchor(anchor) {
+    if (!anchor) return null;
+    const ax = Number(anchor.x);
+    const ay = Number(anchor.y);
+    return {
+      x: Number.isFinite(ax) ? ax : 0.5,
+      y: Number.isFinite(ay) ? ay : 0.5
+    };
+  }
+
+  function pointWithinBounds(bounds, point) {
+    return {
+      x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
+      y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y))
+    };
+  }
+
   class Cart {
     constructor(id) {
       this.id = id;
+      this.type = 'cart';
       this.path = [];
       this.position = { x: 0, y: 0 };
       this.speed = 0.1;
@@ -163,7 +246,20 @@
       this.selected = false;
       this.segments = null;
       this.totalLength = 0;
+      this.spriteKey = 'cart';
+      this.spriteScale = null;
+      this.spriteAnchor = null;
+      this.spriteRotation = 0;
+      this.zoomMin = DEFAULT_ZOOM_MIN;
+      this.zoomMax = DEFAULT_ZOOM_MAX;
+      this.pathZoomMin = DEFAULT_ZOOM_MIN;
+      this.pathZoomMax = DEFAULT_ZOOM_MAX;
+      this.pathColor = 'rgba(0,0,0,0.6)';
+      this.pathWidth = null;
+      this.effect = null;
+      this.phase = 0;
     }
+
     computeSegments() {
       this.segments = [];
       let total = 0;
@@ -178,6 +274,7 @@
       }
       this.totalLength = total;
     }
+
     update(dt) {
       if (this.path.length < 2 || this.segments === null) return;
       this.progress += this.speed * dt;
@@ -206,11 +303,8 @@
     }
   }
 
-  function resolveTile(palette, defaultTileId, tileId) {
-    if (!palette) return null;
-    const resolved = palette.byId[tileId];
-    if (resolved) return resolved;
-    return palette.byId[defaultTileId];
+  function serialiseZoom(value) {
+    return value == null || value === DEFAULT_ZOOM_MAX ? null : value;
   }
 
   class World {
@@ -219,6 +313,33 @@
       this.gridRows = rows;
       this.bounds = { ...bounds };
       this.setPalette(palette);
+      this.layers = {
+        terrain: {
+          zoomMin: DEFAULT_ZOOM_MIN,
+          zoomMax: DEFAULT_ZOOM_MAX,
+          params: {
+            gridCols: cols,
+            gridRows: rows,
+            defaultTileId: this.defaultTileId
+          },
+          grid: []
+        },
+        vector: {
+          zoomMin: DEFAULT_ZOOM_MIN,
+          zoomMax: DEFAULT_ZOOM_MAX,
+          features: []
+        },
+        sprite: {
+          zoomMin: DEFAULT_ZOOM_MIN,
+          zoomMax: DEFAULT_ZOOM_MAX,
+          placements: []
+        },
+        effect: {
+          zoomMin: DEFAULT_ZOOM_MIN,
+          zoomMax: DEFAULT_ZOOM_MAX,
+          agents: []
+        }
+      };
       this.grid = [];
       for (let r = 0; r < rows; r++) {
         const row = [];
@@ -227,33 +348,49 @@
         }
         this.grid.push(row);
       }
-      this.carts = [];
+      this.layers.terrain.grid = this.grid;
+      this._agents = [];
+      this.layers.effect.agents = this._agents;
+      this.cartAgents = [];
+      this.carts = this.cartAgents;
       this.nextCartId = 1;
     }
+
     setPalette(palette) {
       if (!palette) {
         throw new Error('Palette is required to create a World');
       }
       this.palette = palette;
       this.defaultTileId = palette.defaultTileId;
+      if (this.layers && this.layers.terrain) {
+        this.layers.terrain.params = {
+          gridCols: this.gridCols,
+          gridRows: this.gridRows,
+          defaultTileId: this.defaultTileId
+        };
+      }
     }
+
     get width() {
       return this.bounds.maxX - this.bounds.minX;
     }
+
     get height() {
       return this.bounds.maxY - this.bounds.minY;
     }
+
     get cellWidth() {
       return this.width / this.gridCols;
     }
+
     get cellHeight() {
       return this.height / this.gridRows;
     }
+
     clampToBounds(x, y) {
-      const clampedX = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, x));
-      const clampedY = Math.min(this.bounds.maxY, Math.max(this.bounds.minY, y));
-      return { x: clampedX, y: clampedY };
+      return pointWithinBounds(this.bounds, { x, y });
     }
+
     paintTile(nx, ny, tileId) {
       if (nx < this.bounds.minX || nx > this.bounds.maxX || ny < this.bounds.minY || ny > this.bounds.maxY) return;
       if (!this.palette.byId[tileId]) return;
@@ -262,6 +399,7 @@
       if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return;
       this.grid[row][col] = tileId;
     }
+
     addCart() {
       const cart = new Cart(this.nextCartId++);
       cart.position = {
@@ -269,14 +407,17 @@
         y: this.bounds.minY + this.height / 2
       };
       cart.speed = 5 / this.gridCols;
-      this.carts.push(cart);
+      cart.phase = cart.id * 0.37;
+      this.cartAgents.push(cart);
+      this._agents.push(cart);
       return cart;
     }
+
     selectCartAt(wx, wy) {
       let selected = null;
       const selectionRadius = Math.min(this.cellWidth, this.cellHeight) * 0.75;
       let minDistSq = selectionRadius * selectionRadius;
-      for (const cart of this.carts) {
+      for (const cart of this.cartAgents) {
         const dx = cart.position.x - wx;
         const dy = cart.position.y - wy;
         const d = dx * dx + dy * dy;
@@ -286,50 +427,237 @@
         }
       }
       if (selected) {
-        this.carts.forEach(c => c.selected = false);
+        this.cartAgents.forEach(c => c.selected = false);
         selected.selected = true;
         return selected;
       }
       return null;
     }
+
     get selectedCart() {
-      return this.carts.find(c => c.selected);
+      return this.cartAgents.find(c => c.selected);
     }
+
     update(dt) {
-      for (const cart of this.carts) {
+      for (const cart of this.cartAgents) {
         cart.update(dt);
       }
     }
+
     getTileDescriptor(tileId) {
       return resolveTile(this.palette, this.defaultTileId, tileId);
     }
+
+    _normaliseZoomMin(value) {
+      return toZoomMin(value);
+    }
+
+    _normaliseZoomMax(value) {
+      return toZoomMax(value);
+    }
+
+    _syncTerrainParams() {
+      this.layers.terrain.params = {
+        gridCols: this.gridCols,
+        gridRows: this.gridRows,
+        defaultTileId: this.defaultTileId
+      };
+    }
+
+    _resetAgents() {
+      this._agents = [];
+      this.layers.effect.agents = this._agents;
+      this.cartAgents = [];
+      this.carts = this.cartAgents;
+      this.nextCartId = 1;
+    }
+
+    _applyCartData(cart, data, convertPoint, isLegacy) {
+      const path = Array.isArray(data.path) ? mapPolyline(data.path, p => this.clampToBounds(p.x, p.y), convertPoint) : null;
+      cart.path = path ? path : [];
+      cart.position = normalisePoint(data.position, (p) => this.clampToBounds(p.x, p.y), convertPoint);
+      cart.speed = isLegacy && typeof data.speed === 'number'
+        ? data.speed / this.gridCols
+        : (typeof data.speed === 'number' ? data.speed : cart.speed);
+      cart.progress = isLegacy ? 0 : (typeof data.progress === 'number' ? data.progress : 0);
+      cart.loop = data.loop !== undefined ? data.loop : cart.loop;
+      cart.spriteKey = data.spriteKey || data.glyph || cart.spriteKey;
+      cart.spriteScale = normaliseScale(data.spriteScale ?? data.spriteSize ?? data.scale);
+      cart.spriteAnchor = normaliseAnchor(data.spriteAnchor);
+      cart.spriteRotation = Number.isFinite(data.spriteRotation) ? data.spriteRotation : cart.spriteRotation;
+      cart.zoomMin = this._normaliseZoomMin(data.zoomMin);
+      cart.zoomMax = this._normaliseZoomMax(data.zoomMax);
+      cart.pathZoomMin = this._normaliseZoomMin(data.pathZoomMin ?? data.zoomMin);
+      cart.pathZoomMax = this._normaliseZoomMax(data.pathZoomMax ?? data.zoomMax);
+      cart.pathColor = typeof data.pathColor === 'string' ? data.pathColor : cart.pathColor;
+      cart.pathWidth = Number.isFinite(data.pathWidth) ? data.pathWidth : cart.pathWidth;
+      cart.effect = data.effect || cart.effect;
+      cart.phase = Number.isFinite(data.phase) ? data.phase : cart.phase;
+      if (cart.path.length >= 2) {
+        cart.computeSegments();
+        if (!isLegacy && cart.progress > 0) {
+          cart.progress = Math.min(cart.totalLength, cart.progress);
+          cart.update(0);
+        } else {
+          cart.progress = 0;
+          cart.update(0);
+        }
+      }
+    }
+
+    _createEffectAgent(def, convertPoint) {
+      const agent = {
+        id: def.id,
+        type: def.type || 'effect',
+        effect: def.effect || def.type || 'cloudNoise',
+        position: normalisePoint(def.position, (p) => this.clampToBounds(p.x, p.y), convertPoint),
+        zoomMin: this._normaliseZoomMin(def.zoomMin),
+        zoomMax: this._normaliseZoomMax(def.zoomMax),
+        radius: Number.isFinite(def.radius) ? def.radius : Math.min(this.width, this.height) * 0.1,
+        amplitude: Number.isFinite(def.amplitude) ? def.amplitude : Math.min(this.cellWidth, this.cellHeight),
+        spriteKey: def.spriteKey || null,
+        spriteScale: normaliseScale(def.spriteScale),
+        spriteAnchor: normaliseAnchor(def.spriteAnchor),
+        spriteRotation: Number.isFinite(def.spriteRotation) ? def.spriteRotation : 0,
+        phase: Number.isFinite(def.phase) ? def.phase : 0,
+        speed: Number.isFinite(def.speed) ? def.speed : 1,
+        seed: Number.isFinite(def.seed) ? def.seed : undefined,
+        opacity: Number.isFinite(def.opacity) ? def.opacity : undefined
+      };
+      this._agents.push(agent);
+      return agent;
+    }
+
     serialize() {
+      const terrainGrid = cloneGrid(this.grid);
+      const serializeFeatures = (features) => features.map((feature) => {
+        const payload = { ...feature };
+        if (feature.line) {
+          payload.line = feature.line.map(clonePoint);
+        }
+        if (feature.poly) {
+          payload.poly = feature.poly.map(clonePoint);
+        }
+        payload.zoomMin = feature.zoomMin ?? DEFAULT_ZOOM_MIN;
+        payload.zoomMax = serialiseZoom(feature.zoomMax);
+        if (feature.style) {
+          payload.style = { ...feature.style };
+        }
+        return payload;
+      });
+      const serializePlacements = (placements) => placements.map((placement) => {
+        const payload = { ...placement };
+        payload.position = clonePoint(placement.position);
+        payload.zoomMin = placement.zoomMin ?? DEFAULT_ZOOM_MIN;
+        payload.zoomMax = serialiseZoom(placement.zoomMax);
+        if (placement.scale && typeof placement.scale === 'object') {
+          payload.scale = { ...placement.scale };
+        }
+        if (placement.anchor) {
+          payload.anchor = { ...placement.anchor };
+        }
+        return payload;
+      });
+      const serializeAgents = () => this._agents.map((agent) => {
+        if (agent.type === 'cart' || agent instanceof Cart) {
+          return {
+            type: 'cart',
+            id: agent.id,
+            path: agent.path.map(clonePoint),
+            position: clonePoint(agent.position),
+            speed: agent.speed,
+            progress: agent.progress,
+            loop: agent.loop,
+            spriteKey: agent.spriteKey,
+            spriteScale: agent.spriteScale,
+            spriteAnchor: agent.spriteAnchor,
+            spriteRotation: agent.spriteRotation,
+            zoomMin: agent.zoomMin ?? DEFAULT_ZOOM_MIN,
+            zoomMax: serialiseZoom(agent.zoomMax),
+            pathZoomMin: agent.pathZoomMin ?? DEFAULT_ZOOM_MIN,
+            pathZoomMax: serialiseZoom(agent.pathZoomMax),
+            pathColor: agent.pathColor,
+            pathWidth: agent.pathWidth,
+            effect: agent.effect,
+            phase: agent.phase
+          };
+        }
+        const payload = { ...agent };
+        payload.position = clonePoint(agent.position);
+        payload.zoomMin = agent.zoomMin ?? DEFAULT_ZOOM_MIN;
+        payload.zoomMax = serialiseZoom(agent.zoomMax);
+        payload.radius = Number.isFinite(agent.radius) ? agent.radius : undefined;
+        payload.amplitude = Number.isFinite(agent.amplitude) ? agent.amplitude : undefined;
+        if (payload.spriteScale && typeof payload.spriteScale === 'object') {
+          payload.spriteScale = { ...payload.spriteScale };
+        }
+        if (payload.spriteAnchor) {
+          payload.spriteAnchor = { ...payload.spriteAnchor };
+        }
+        return payload;
+      });
+
       return {
         bounds: { ...this.bounds },
         gridCols: this.gridCols,
         gridRows: this.gridRows,
         cols: this.gridCols,
         rows: this.gridRows,
-        grid: this.grid,
-        carts: this.carts.map(c => ({
-          id: c.id,
-          path: c.path.map(p => ({ x: p.x, y: p.y })),
-          position: { x: c.position.x, y: c.position.y },
-          speed: c.speed,
-          progress: c.progress,
-          loop: c.loop
-        }))
+        grid: terrainGrid,
+        carts: this.cartAgents.map((cart) => ({
+          id: cart.id,
+          path: cart.path.map(clonePoint),
+          position: clonePoint(cart.position),
+          speed: cart.speed,
+          progress: cart.progress,
+          loop: cart.loop
+        })),
+        layers: {
+          terrain: {
+            zoomMin: this.layers.terrain.zoomMin ?? DEFAULT_ZOOM_MIN,
+            zoomMax: serialiseZoom(this.layers.terrain.zoomMax),
+            params: {
+              gridCols: this.gridCols,
+              gridRows: this.gridRows,
+              defaultTileId: this.defaultTileId
+            },
+            grid: terrainGrid
+          },
+          vector: {
+            zoomMin: this.layers.vector.zoomMin ?? DEFAULT_ZOOM_MIN,
+            zoomMax: serialiseZoom(this.layers.vector.zoomMax),
+            features: serializeFeatures(this.layers.vector.features)
+          },
+          sprite: {
+            zoomMin: this.layers.sprite.zoomMin ?? DEFAULT_ZOOM_MIN,
+            zoomMax: serialiseZoom(this.layers.sprite.zoomMax),
+            placements: serializePlacements(this.layers.sprite.placements)
+          },
+          effect: {
+            zoomMin: this.layers.effect.zoomMin ?? DEFAULT_ZOOM_MIN,
+            zoomMax: serialiseZoom(this.layers.effect.zoomMax),
+            agents: serializeAgents()
+          }
+        }
       };
     }
+
     deserialize(data) {
-      const cols = data.gridCols ?? data.cols ?? this.gridCols;
-      const rows = data.gridRows ?? data.rows ?? this.gridRows;
+      const cols = data.layers?.terrain?.params?.gridCols ?? data.gridCols ?? data.cols ?? this.gridCols;
+      const rows = data.layers?.terrain?.params?.gridRows ?? data.gridRows ?? data.rows ?? this.gridRows;
       this.gridCols = cols;
       this.gridRows = rows;
       this.bounds = data.bounds ? { ...data.bounds } : { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+      this._syncTerrainParams();
+
       const legacyTileSize = data.tileSize;
       const isLegacy = legacyTileSize !== undefined && !data.bounds;
-      const incomingGrid = Array.isArray(data.grid) ? data.grid : [];
+
+      const terrainLayer = data.layers?.terrain ?? {};
+      this.layers.terrain.zoomMin = this._normaliseZoomMin(terrainLayer.zoomMin);
+      this.layers.terrain.zoomMax = this._normaliseZoomMax(terrainLayer.zoomMax);
+
+      const incomingGrid = Array.isArray(terrainLayer.grid) ? terrainLayer.grid : (Array.isArray(data.grid) ? data.grid : []);
       this.grid = [];
       for (let r = 0; r < this.gridRows; r++) {
         const sourceRow = incomingGrid[r] || [];
@@ -340,43 +668,170 @@
         }
         this.grid.push(row);
       }
-      this.carts = [];
-      this.nextCartId = 1;
-      const carts = Array.isArray(data.carts) ? data.carts : [];
-      for (const cd of carts) {
-        const id = cd.id ?? this.nextCartId++;
-        const cart = new Cart(id);
-        cart.speed = 5 / this.gridCols;
-        const convertPoint = (pt) => {
-          if (!pt) return { x: this.bounds.minX + this.width / 2, y: this.bounds.minY + this.height / 2 };
-          if (isLegacy) {
-            return {
-              x: this.bounds.minX + (pt.x / this.gridCols) * this.width,
-              y: this.bounds.minY + (pt.y / this.gridRows) * this.height
-            };
-          }
-          return { x: pt.x, y: pt.y };
-        };
-        cart.path = Array.isArray(cd.path) ? cd.path.map(convertPoint) : [];
-        cart.position = convertPoint(cd.position);
-        cart.speed = isLegacy && typeof cd.speed === 'number'
-          ? cd.speed / this.gridCols
-          : (typeof cd.speed === 'number' ? cd.speed : cart.speed);
-        cart.progress = isLegacy ? 0 : (typeof cd.progress === 'number' ? cd.progress : 0);
-        cart.loop = cd.loop !== undefined ? cd.loop : cart.loop;
-        if (cart.path.length >= 2) {
-          cart.computeSegments();
-          if (!isLegacy && cart.progress > 0) {
-            cart.progress = Math.min(cart.totalLength, cart.progress);
-            cart.update(0);
+      this.layers.terrain.grid = this.grid;
+
+      const convertPoint = (pt) => {
+        if (!pt) {
+          return {
+            x: this.bounds.minX + this.width / 2,
+            y: this.bounds.minY + this.height / 2
+          };
+        }
+        let point;
+        if (Array.isArray(pt) && pt.length >= 2) {
+          point = { x: Number(pt[0]), y: Number(pt[1]) };
+        } else if (typeof pt === 'object') {
+          point = { x: Number(pt.x), y: Number(pt.y) };
+        } else {
+          point = { x: 0.5, y: 0.5 };
+        }
+        if (isLegacy) {
+          return {
+            x: this.bounds.minX + (point.x / this.gridCols) * this.width,
+            y: this.bounds.minY + (point.y / this.gridRows) * this.height
+          };
+        }
+        return point;
+      };
+
+      const vectorLayer = data.layers?.vector ?? {};
+      this.layers.vector.zoomMin = this._normaliseZoomMin(vectorLayer.zoomMin);
+      this.layers.vector.zoomMax = this._normaliseZoomMax(vectorLayer.zoomMax);
+      const parsedFeatures = [];
+      if (Array.isArray(vectorLayer.features)) {
+        for (const feature of vectorLayer.features) {
+          const type = feature?.type || (feature?.poly ? 'polygon' : 'polyline');
+          const rawPoints = feature?.line || feature?.poly || feature?.points || feature?.path;
+          const requiredPoints = type === 'polygon' ? 3 : 2;
+          const mapped = mapPolyline(rawPoints, (p) => this.clampToBounds(p.x, p.y), convertPoint, requiredPoints);
+          if (!mapped) continue;
+          const stored = { ...feature };
+          if (type === 'polygon') {
+            stored.poly = mapped;
+            delete stored.line;
           } else {
-            cart.progress = 0;
-            cart.update(0);
+            stored.line = mapped;
+            delete stored.poly;
+          }
+          stored.zoomMin = this._normaliseZoomMin(feature.zoomMin);
+          stored.zoomMax = this._normaliseZoomMax(feature.zoomMax);
+          if (feature.style) {
+            stored.style = { ...feature.style };
+          }
+          parsedFeatures.push(stored);
+        }
+      }
+      this.layers.vector.features = parsedFeatures;
+
+      const spriteLayer = data.layers?.sprite ?? {};
+      this.layers.sprite.zoomMin = this._normaliseZoomMin(spriteLayer.zoomMin);
+      this.layers.sprite.zoomMax = this._normaliseZoomMax(spriteLayer.zoomMax);
+      const parsedPlacements = [];
+      if (Array.isArray(spriteLayer.placements)) {
+        for (const placement of spriteLayer.placements) {
+          if (!placement || !placement.glyph) continue;
+          const position = normalisePoint(placement.position, (p) => this.clampToBounds(p.x, p.y), convertPoint);
+          parsedPlacements.push({
+            ...placement,
+            position,
+            scale: normaliseScale(placement.scale ?? placement.spriteScale ?? placement.size),
+            anchor: normaliseAnchor(placement.anchor ?? placement.spriteAnchor),
+            zoomMin: this._normaliseZoomMin(placement.zoomMin),
+            zoomMax: this._normaliseZoomMax(placement.zoomMax)
+          });
+        }
+      }
+      this.layers.sprite.placements = parsedPlacements;
+
+      const effectLayer = data.layers?.effect ?? {};
+      this.layers.effect.zoomMin = this._normaliseZoomMin(effectLayer.zoomMin);
+      this.layers.effect.zoomMax = this._normaliseZoomMax(effectLayer.zoomMax);
+      this._resetAgents();
+      const agentDefs = Array.isArray(effectLayer.agents) ? effectLayer.agents : null;
+      if (agentDefs) {
+        for (const def of agentDefs) {
+          if (def?.type === 'cart') {
+            const id = def.id ?? this.nextCartId++;
+            const cart = new Cart(id);
+            this._applyCartData(cart, def, convertPoint, isLegacy);
+            this.cartAgents.push(cart);
+            this._agents.push(cart);
+            this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
+          } else {
+            this._createEffectAgent(def || {}, convertPoint);
           }
         }
-        this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
-        this.carts.push(cart);
       }
+
+      if (!agentDefs) {
+        const carts = Array.isArray(data.carts) ? data.carts : [];
+        for (const cd of carts) {
+          const id = cd.id ?? this.nextCartId++;
+          const cart = new Cart(id);
+          cart.speed = 5 / this.gridCols;
+          this._applyCartData(cart, cd, convertPoint, isLegacy);
+          this.cartAgents.push(cart);
+          this._agents.push(cart);
+          this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
+        }
+      }
+    }
+
+    getTerrainLayer() {
+      return this.layers.terrain;
+    }
+
+    getVectorLayer() {
+      const base = this.layers.vector;
+      const features = base.features.map(feature => feature);
+      for (const cart of this.cartAgents) {
+        if (cart.path.length < 2) continue;
+        features.push({
+          id: `cart-path-${cart.id}`,
+          type: 'polyline',
+          line: cart.path.map(clonePoint),
+          zoomMin: cart.pathZoomMin ?? base.zoomMin,
+          zoomMax: cart.pathZoomMax ?? base.zoomMax,
+          style: {
+            strokeStyle: cart.pathColor,
+            lineWidth: cart.pathWidth ?? Math.max(this.cellWidth, this.cellHeight) * 0.1
+          }
+        });
+      }
+      return {
+        zoomMin: base.zoomMin,
+        zoomMax: base.zoomMax,
+        features
+      };
+    }
+
+    getSpriteLayer() {
+      const base = this.layers.sprite;
+      const placements = base.placements.map(placement => placement);
+      for (const agent of this._agents) {
+        if (!agent || !agent.spriteKey) continue;
+        placements.push({
+          id: agent.id != null ? `agent-${agent.id}` : undefined,
+          glyph: agent.spriteKey,
+          position: clonePoint(agent.position),
+          scale: agent.spriteScale,
+          anchor: agent.spriteAnchor,
+          rotation: agent.spriteRotation,
+          zoomMin: agent.zoomMin ?? base.zoomMin,
+          zoomMax: agent.zoomMax ?? base.zoomMax,
+          priority: agent.priority,
+          agentRef: agent
+        });
+      }
+      return {
+        zoomMin: base.zoomMin,
+        zoomMax: base.zoomMax,
+        placements
+      };
+    }
+
+    getEffectLayer() {
+      return this.layers.effect;
     }
   }
 
@@ -386,12 +841,14 @@
       this.y = 0;
       this.scale = 1;
     }
+
     screenToWorld(px, py) {
       return {
         x: (px - this.x) / this.scale,
         y: (py - this.y) / this.scale
       };
     }
+
     worldToScreen(wx, wy) {
       return {
         x: wx * this.scale + this.x,
@@ -400,16 +857,41 @@
     }
   }
 
+  function zoomInRange(target, zoom) {
+    if (!target) return true;
+    const min = Number.isFinite(target.zoomMin) ? target.zoomMin : 0;
+    const maxValue = target.zoomMax == null ? Infinity : target.zoomMax;
+    return zoom >= min && zoom <= maxValue;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function getTimeSeconds() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now() / 1000;
+    }
+    return Date.now() / 1000;
+  }
+
   class Renderer {
-    constructor(canvas, world) {
+    constructor(canvas, world, glyphs) {
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
       this.world = world;
+      this.glyphs = glyphs;
       this.camera = new Camera();
       this._cameraFitted = false;
+      this.spriteBudget = 200;
+      this.effectShaders = {
+        cloudNoise: (ctx, agent, view, time) => this.renderCloudNoise(ctx, agent, view, time),
+        treeSway: (ctx, agent, view, time) => this.renderTreeSway(ctx, agent, view, time)
+      };
       this.resize(true);
       window.addEventListener('resize', () => this.resize());
     }
+
     resize(forceFit = false) {
       this.canvas.width = window.innerWidth;
       this.canvas.height = window.innerHeight;
@@ -417,6 +899,7 @@
         this.fitCameraToWorld();
       }
     }
+
     fitCameraToWorld() {
       const worldWidth = this.world.width;
       const worldHeight = this.world.height;
@@ -431,77 +914,296 @@
       this.camera.y = (this.canvas.height - worldHeight * scale) / 2 + offsetY;
       this._cameraFitted = true;
     }
+
     draw() {
       const ctx = this.ctx;
       ctx.save();
       ctx.setTransform(this.camera.scale, 0, 0, this.camera.scale, this.camera.x, this.camera.y);
-      const worldLeft = -this.camera.x / this.camera.scale;
-      const worldTop = -this.camera.y / this.camera.scale;
-      const worldWidth = this.canvas.width / this.camera.scale;
-      const worldHeight = this.canvas.height / this.camera.scale;
-      ctx.clearRect(worldLeft, worldTop, worldWidth, worldHeight);
-      this.drawTiles(ctx);
-      this.drawPaths(ctx);
-      this.drawCarts(ctx);
+      const view = this._computeViewBounds();
+      ctx.clearRect(view.left, view.top, view.width, view.height);
+      this.drawTerrainPass(ctx, view);
+      this.drawVectorPass(ctx, view);
+      this.drawSpritePass(ctx, view);
+      this.drawEffectPass(ctx, view);
       ctx.restore();
     }
-    drawTiles(ctx) {
-      const world = this.world;
-      const cellWidth = world.cellWidth;
-      const cellHeight = world.cellHeight;
-      if (!isFinite(cellWidth) || !isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
+
+    _computeViewBounds() {
       const left = -this.camera.x / this.camera.scale;
       const top = -this.camera.y / this.camera.scale;
-      const visibleWidth = this.canvas.width / this.camera.scale;
-      const visibleHeight = this.canvas.height / this.camera.scale;
-      const colStart = Math.max(0, Math.floor((left - world.bounds.minX) / cellWidth));
+      const width = this.canvas.width / this.camera.scale;
+      const height = this.canvas.height / this.camera.scale;
+      return {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        zoom: this.camera.scale,
+        time: getTimeSeconds()
+      };
+    }
+
+    drawTerrainPass(ctx, view) {
+      const layer = this.world.getTerrainLayer();
+      if (!zoomInRange(layer, view.zoom)) return;
+      const grid = layer.grid;
+      if (!grid) return;
+      const cellWidth = this.world.cellWidth;
+      const cellHeight = this.world.cellHeight;
+      if (!isFinite(cellWidth) || !isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
+      const left = view.left;
+      const top = view.top;
+      const visibleWidth = view.width;
+      const visibleHeight = view.height;
+      const colStart = Math.max(0, Math.floor((left - this.world.bounds.minX) / cellWidth));
       const colEnd = Math.min(
-        world.gridCols - 1,
-        Math.floor(((left + visibleWidth) - world.bounds.minX - 1e-9) / cellWidth)
+        this.world.gridCols - 1,
+        Math.floor(((left + visibleWidth) - this.world.bounds.minX - 1e-9) / cellWidth)
       );
-      const rowStart = Math.max(0, Math.floor((top - world.bounds.minY) / cellHeight));
+      const rowStart = Math.max(0, Math.floor((top - this.world.bounds.minY) / cellHeight));
       const rowEnd = Math.min(
-        world.gridRows - 1,
-        Math.floor(((top + visibleHeight) - world.bounds.minY - 1e-9) / cellHeight)
+        this.world.gridRows - 1,
+        Math.floor(((top + visibleHeight) - this.world.bounds.minY - 1e-9) / cellHeight)
       );
       if (colEnd < colStart || rowEnd < rowStart) return;
       for (let row = rowStart; row <= rowEnd; row++) {
         for (let col = colStart; col <= colEnd; col++) {
-          const tileId = world.grid[row][col];
-          const tile = world.getTileDescriptor(tileId);
+          const tileId = grid[row][col];
+          const tile = this.world.getTileDescriptor(tileId);
           if (!tile) continue;
           ctx.fillStyle = tile.color;
-          const x = world.bounds.minX + col * cellWidth;
-          const y = world.bounds.minY + row * cellHeight;
+          const x = this.world.bounds.minX + col * cellWidth;
+          const y = this.world.bounds.minY + row * cellHeight;
           ctx.fillRect(x, y, cellWidth, cellHeight);
         }
       }
     }
-    drawPaths(ctx) {
-      const world = this.world;
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 1 / this.camera.scale;
-      for (const cart of world.carts) {
-        if (cart.path.length < 2) continue;
+
+    drawVectorPass(ctx, view) {
+      const layer = this.world.getVectorLayer();
+      if (!zoomInRange(layer, view.zoom)) return;
+      for (const feature of layer.features) {
+        if (!feature) continue;
+        if (!zoomInRange(feature, view.zoom)) continue;
+        const style = feature.style || {};
+        const strokeStyle = style.strokeStyle || 'rgba(0,0,0,0.6)';
+        const lineWidth = Number.isFinite(style.lineWidth) ? style.lineWidth : (1 / clamp(view.zoom, 1, Infinity));
+        const fillStyle = style.fillStyle;
+        if (feature.poly && feature.poly.length >= 3) {
+          ctx.save();
+          ctx.beginPath();
+          feature.poly.forEach((p, index) => {
+            if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+          });
+          ctx.closePath();
+          if (fillStyle) {
+            ctx.fillStyle = fillStyle;
+            ctx.fill();
+          }
+          ctx.lineWidth = lineWidth;
+          ctx.strokeStyle = strokeStyle;
+          ctx.stroke();
+          ctx.restore();
+          continue;
+        }
+        const points = feature.line;
+        if (!points || points.length < 2) continue;
+        ctx.save();
         ctx.beginPath();
-        for (let i = 0; i < cart.path.length; i++) {
-          const p = cart.path[i];
-          if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        points.forEach((p, index) => {
+          if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        });
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = strokeStyle;
+        if (style.lineDash && Array.isArray(style.lineDash)) {
+          ctx.setLineDash(style.lineDash);
         }
         ctx.stroke();
+        ctx.restore();
       }
     }
-    drawCarts(ctx) {
-      const world = this.world;
-      const baseRadius = Math.min(world.cellWidth, world.cellHeight);
-      if (!isFinite(baseRadius) || baseRadius <= 0) return;
-      const radius = baseRadius * 0.3;
-      for (const cart of world.carts) {
-        ctx.fillStyle = cart.selected ? 'yellow' : 'red';
+
+    _resolveSpriteScale(placement, glyph) {
+      const baseWidth = this.world.cellWidth;
+      const baseHeight = this.world.cellHeight;
+      const defaultScaleX = baseWidth / glyph.width;
+      const defaultScaleY = baseHeight / glyph.height;
+      const scale = placement.scale;
+      if (scale == null) {
+        return { x: defaultScaleX, y: defaultScaleY };
+      }
+      if (typeof scale === 'number') {
+        return { x: scale, y: scale };
+      }
+      const sx = Number.isFinite(scale.x) ? scale.x : defaultScaleX;
+      const sy = Number.isFinite(scale.y) ? scale.y : defaultScaleY;
+      return { x: sx, y: sy };
+    }
+
+    _resolveAnchor(placement) {
+      const anchor = placement.anchor;
+      if (!anchor) {
+        return { x: 0.5, y: 0.5 };
+      }
+      const ax = Number.isFinite(anchor.x) ? anchor.x : 0.5;
+      const ay = Number.isFinite(anchor.y) ? anchor.y : 0.5;
+      return { x: ax, y: ay };
+    }
+
+    _computeSpriteOffset(agent, time) {
+      if (!agent) return { x: 0, y: 0 };
+      const effect = agent.effect || agent.type;
+      if (effect === 'treeSway') {
+        const amplitude = Number.isFinite(agent.amplitude) ? agent.amplitude : Math.min(this.world.cellWidth, this.world.cellHeight) * 0.3;
+        const speed = Number.isFinite(agent.speed) ? agent.speed : 1.2;
+        const phase = (agent.phase || 0) + speed * time;
+        return {
+          x: Math.sin(phase) * amplitude,
+          y: Math.cos(phase * 0.5) * amplitude * 0.1
+        };
+      }
+      return { x: 0, y: 0 };
+    }
+
+    _intersectsView(bounds, view) {
+      return !(bounds.right < view.left || bounds.left > view.right || bounds.bottom < view.top || bounds.top > view.bottom);
+    }
+
+    drawSpritePass(ctx, view) {
+      const layer = this.world.getSpriteLayer();
+      if (!zoomInRange(layer, view.zoom)) return;
+      const commands = [];
+      let index = 0;
+      for (const placement of layer.placements) {
+        if (!placement || !placement.glyph) continue;
+        if (!zoomInRange(placement, view.zoom)) continue;
+        const glyph = this.glyphs?.byKey ? this.glyphs.byKey[placement.glyph] : null;
+        if (!glyph || !glyph.canvas) continue;
+        const scale = this._resolveSpriteScale(placement, glyph);
+        if (scale.x <= 0 || scale.y <= 0) continue;
+        const anchor = this._resolveAnchor(placement);
+        const offset = this._computeSpriteOffset(placement.agentRef, view.time);
+        const width = glyph.width * scale.x;
+        const height = glyph.height * scale.y;
+        const x = placement.position.x + offset.x - anchor.x * width;
+        const y = placement.position.y + offset.y - anchor.y * height;
+        const rotation = Number.isFinite(placement.rotation) ? placement.rotation : 0;
+        const centerX = x + width * 0.5;
+        const centerY = y + height * 0.5;
+        const radius = Math.hypot(width, height) * 0.5;
+        const bounds = {
+          left: centerX - radius,
+          right: centerX + radius,
+          top: centerY - radius,
+          bottom: centerY + radius
+        };
+        if (!this._intersectsView(bounds, view)) continue;
+        commands.push({
+          glyph,
+          x,
+          y,
+          width,
+          height,
+          rotation,
+          centerX,
+          centerY,
+          placement,
+          order: Number.isFinite(placement.priority) ? placement.priority : 0,
+          index: index++
+        });
+      }
+      if (commands.length === 0) return;
+      commands.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.index - b.index;
+      });
+      const culled = commands.slice(0, this.spriteBudget);
+      const smoothing = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
+      for (const cmd of culled) {
+        if (cmd.rotation) {
+          ctx.save();
+          ctx.translate(cmd.centerX, cmd.centerY);
+          ctx.rotate(cmd.rotation);
+          ctx.drawImage(cmd.glyph.canvas, -cmd.width * 0.5, -cmd.height * 0.5, cmd.width, cmd.height);
+          ctx.restore();
+        } else {
+          ctx.drawImage(cmd.glyph.canvas, cmd.x, cmd.y, cmd.width, cmd.height);
+        }
+        if (cmd.placement.agentRef && cmd.placement.agentRef.effect === 'treeSway') {
+          this.renderTreeSwayHighlight(ctx, cmd);
+        }
+      }
+      ctx.imageSmoothingEnabled = smoothing;
+    }
+
+    drawEffectPass(ctx, view) {
+      const layer = this.world.getEffectLayer();
+      if (!zoomInRange(layer, view.zoom)) return;
+      for (const agent of layer.agents) {
+        if (!agent) continue;
+        if (!zoomInRange(agent, view.zoom)) continue;
+        const effect = agent.effect || agent.type;
+        const shader = this.effectShaders[effect];
+        if (!shader) continue;
+        shader(ctx, agent, view, view.time);
+      }
+    }
+
+    renderCloudNoise(ctx, agent, _view, time) {
+      const radius = Number.isFinite(agent.radius) ? agent.radius : Math.min(this.world.width, this.world.height) * 0.1;
+      const opacity = agent.opacity != null ? agent.opacity : 0.35;
+      const speed = Number.isFinite(agent.speed) ? agent.speed : 0.08;
+      const phase = (agent.phase || 0) + speed * time;
+      const seed = agent.seed != null ? agent.seed : (typeof agent.id === 'number' ? agent.id : 1);
+      const layers = 6;
+      ctx.save();
+      ctx.translate(agent.position.x, agent.position.y);
+      ctx.globalAlpha = opacity;
+      for (let i = 0; i < layers; i++) {
+        const angle = (i / layers) * Math.PI * 2;
+        const hash = Math.sin((seed + i) * 12.9898) * 43758.5453;
+        const noise = hash - Math.floor(hash);
+        const r = radius * (0.6 + 0.4 * noise);
+        const dx = Math.cos(angle + phase * 0.3) * r;
+        const dy = Math.sin(angle * 0.9 + phase * 0.2) * r * 0.6;
+        const gradient = ctx.createRadialGradient(dx, dy, r * 0.2, dx, dy, r);
+        gradient.addColorStop(0, 'rgba(255,255,255,0.9)');
+        gradient.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = gradient;
         ctx.beginPath();
-        ctx.arc(cart.position.x, cart.position.y, radius, 0, Math.PI * 2);
+        ctx.arc(dx, dy, r, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.restore();
+    }
+
+    renderTreeSway(ctx, agent, _view, time) {
+      const amplitude = Number.isFinite(agent.amplitude) ? agent.amplitude : Math.min(this.world.cellWidth, this.world.cellHeight) * 0.4;
+      const height = amplitude * 3;
+      const speed = Number.isFinite(agent.speed) ? agent.speed : 1.4;
+      const phase = (agent.phase || 0) + time * speed;
+      const sway = Math.sin(phase) * amplitude;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.lineWidth = Math.max(this.world.cellWidth, this.world.cellHeight) * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(agent.position.x, agent.position.y);
+      ctx.quadraticCurveTo(agent.position.x + sway, agent.position.y - height * 0.5, agent.position.x, agent.position.y - height);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    renderTreeSwayHighlight(ctx, command) {
+      ctx.save();
+      ctx.globalAlpha = 0.1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(command.centerX, command.centerY - command.height * 0.3, command.width * 0.6, command.height * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -514,6 +1216,7 @@
       this.isPanning = false;
       this.initEvents();
     }
+
     initEvents() {
       this.canvas.addEventListener('pointerdown', e => this.onPointerDown(e));
       this.canvas.addEventListener('pointermove', e => this.onPointerMove(e));
@@ -521,6 +1224,7 @@
       this.canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
       this.canvas.addEventListener('contextmenu', e => e.preventDefault());
     }
+
     onPointerDown(e) {
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -536,7 +1240,9 @@
           if (cart) {
             const point = this.world.clampToBounds(worldPos.x, worldPos.y);
             cart.path.push(point);
-            if (cart.path.length >= 2) cart.computeSegments();
+            if (cart.path.length >= 2) {
+              cart.computeSegments();
+            }
           }
         } else {
           const point = this.world.clampToBounds(worldPos.x, worldPos.y);
@@ -547,6 +1253,7 @@
         }
       }
     }
+
     onPointerMove(e) {
       if (this.isPanning && (e.buttons & 2)) {
         const dx = e.clientX - this.lastPanX;
@@ -564,11 +1271,13 @@
         this.world.paintTile(point.x, point.y, this.currentTileId);
       }
     }
+
     onPointerUp(e) {
       if (e.button === 2) {
         this.isPanning = false;
       }
     }
+
     onWheel(e) {
       e.preventDefault();
       const scaleFactor = 1.1;
@@ -578,7 +1287,11 @@
       const camera = this.renderer.camera;
       const worldBefore = camera.screenToWorld(px, py);
       let newScale = camera.scale;
-      if (e.deltaY < 0) newScale *= scaleFactor; else newScale /= scaleFactor;
+      if (e.deltaY < 0) {
+        newScale *= scaleFactor;
+      } else {
+        newScale /= scaleFactor;
+      }
       newScale = Math.min(Math.max(newScale, 0.2), 5);
       camera.scale = newScale;
       camera.x = px - worldBefore.x * newScale;
@@ -609,12 +1322,12 @@
 
   async function init() {
     try {
-      const { palette } = await loadAssets();
+      const { palette, glyphs } = await loadAssets();
       const COLS = 50;
       const ROWS = 50;
       const canvas = document.getElementById('canvas');
       const world = new World(COLS, ROWS, palette);
-      const renderer = new Renderer(canvas, world);
+      const renderer = new Renderer(canvas, world, glyphs);
       const input = new InputHandler(canvas, renderer, world);
       input.currentTileId = palette.defaultTileId;
 

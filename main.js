@@ -30,10 +30,10 @@ function populatePaletteUI(palette, input) {
 
 async function init() {
   try {
-    const { palette } = await loadAssets();
+    const { palette, glyphs } = await loadAssets();
     const canvas = document.getElementById('canvas');
     const world = new World(COLS, ROWS, palette);
-    const renderer = new Renderer(canvas, world);
+    const renderer = new Renderer(canvas, world, glyphs);
     const input = new Input(canvas, renderer, world);
     input.currentTileId = palette.defaultTileId;
 
