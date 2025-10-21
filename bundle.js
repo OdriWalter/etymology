@@ -808,8 +808,13 @@
       window.addEventListener("resize", () => this.resize());
     }
     resize(forceFit = false) {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      this.canvas.width = Math.floor(width * dpr);
+      this.canvas.height = Math.floor(height * dpr);
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
       if (forceFit || !this._cameraFitted) {
         this.fitCameraToWorld();
       }
