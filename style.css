@@ -44,6 +44,32 @@ html, body {
   cursor: pointer;
 }
 
+#seedControls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+#seedControls label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#seedControls input {
+  width: 120px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+#seedControls button {
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 #canvas {
   display: block;
   width: 100%;
