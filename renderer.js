@@ -5,6 +5,8 @@ export class Camera {
     this.x = 0;
     this.y = 0;
     this.scale = 1;
+    this.minScale = 0.01;
+    this.maxScale = Infinity;
   }
 
   screenToWorld(px, py) {
@@ -19,6 +21,23 @@ export class Camera {
       x: wx * this.scale + this.x,
       y: wy * this.scale + this.y
     };
+  }
+
+  setScaleLimits(minScale, maxScale) {
+    if (Number.isFinite(minScale) && minScale > 0) {
+      this.minScale = minScale;
+    }
+    if (maxScale == null) {
+      this.maxScale = Infinity;
+    } else if (Number.isFinite(maxScale) && maxScale >= this.minScale) {
+      this.maxScale = maxScale;
+    }
+    if (this.scale < this.minScale) {
+      this.scale = this.minScale;
+    }
+    if (this.scale > this.maxScale) {
+      this.scale = this.maxScale;
+    }
   }
 }
 
@@ -73,6 +92,9 @@ export class Renderer {
     const scaleY = this.canvas.height / worldHeight;
     const scale = Math.min(scaleX, scaleY);
     this.camera.scale = scale;
+    const minScale = Math.max(scale * 0.05, 1e-4);
+    const maxScale = Math.max(scale * 40, minScale);
+    this.camera.setScaleLimits(minScale, maxScale);
     const offsetX = -this.world.bounds.minX * scale;
     const offsetY = -this.world.bounds.minY * scale;
     this.camera.x = (this.canvas.width - worldWidth * scale) / 2 + offsetX;
