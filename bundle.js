@@ -315,6 +315,16 @@
       if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return;
       this.grid[row][col] = tileId;
     }
+    fillAllTiles(tileId) {
+      if (!this.palette || !this.palette.byId[tileId]) return;
+      for (let row = 0; row < this.grid.length; row++) {
+        const gridRow = this.grid[row];
+        if (!Array.isArray(gridRow)) continue;
+        for (let col = 0; col < gridRow.length; col++) {
+          gridRow[col] = tileId;
+        }
+      }
+    }
     addCart() {
       const cart = new Cart(this.nextCartId++);
       cart.position = {
@@ -831,7 +841,7 @@
       if (worldWidth === 0 || worldHeight === 0) return;
       const scaleX = this.canvas.width / worldWidth;
       const scaleY = this.canvas.height / worldHeight;
-      const scale = Math.min(scaleX, scaleY);
+      const scale = Math.max(scaleX, scaleY);
       this.camera.scale = scale;
       this.camera.baseScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
       const minScale = Math.max(scale * 0.05, 1e-4);
@@ -1596,6 +1606,12 @@
         world.carts.forEach((c) => c.selected = false);
         cart.selected = true;
       };
+      const fillAllBtn = document.getElementById("fillAll");
+      if (fillAllBtn) {
+        fillAllBtn.onclick = () => {
+          world.fillAllTiles(input.currentTileId);
+        };
+      }
       const playPauseBtn = document.getElementById("playPause");
       let playing = false;
       playPauseBtn.onclick = () => {
