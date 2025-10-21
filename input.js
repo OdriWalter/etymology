@@ -29,23 +29,20 @@ export class Input {
       this.lastPanY = e.clientY;
     } else if (e.button === 0) {
       const worldPos = this.renderer.camera.screenToWorld(x, y);
-      const ts = this.world.tileSize;
-      const worldTileX = worldPos.x / ts;
-      const worldTileY = worldPos.y / ts;
       if (e.shiftKey) {
         const cart = this.world.selectedCart;
         if (cart) {
-          cart.path.push({ x: worldTileX, y: worldTileY });
+          const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+          cart.path.push(point);
           if (cart.path.length >= 2) {
             cart.computeSegments();
           }
         }
       } else {
-        const selected = this.world.selectCartAt(worldTileX, worldTileY);
+        const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+        const selected = this.world.selectCartAt(point.x, point.y);
         if (!selected) {
-          const col = Math.floor(worldPos.x / ts);
-          const row = Math.floor(worldPos.y / ts);
-          this.world.paintTile(col, row, this.currentTileId);
+          this.world.paintTile(point.x, point.y, this.currentTileId);
         }
       }
     }
@@ -64,10 +61,8 @@ export class Input {
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;
       const worldPos = this.renderer.camera.screenToWorld(px, py);
-      const ts = this.world.tileSize;
-      const col = Math.floor(worldPos.x / ts);
-      const row = Math.floor(worldPos.y / ts);
-      this.world.paintTile(col, row, this.currentTileId);
+      const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+      this.world.paintTile(point.x, point.y, this.currentTileId);
     }
   }
 

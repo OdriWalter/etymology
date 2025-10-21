@@ -157,7 +157,7 @@
       this.id = id;
       this.path = [];
       this.position = { x: 0, y: 0 };
-      this.speed = 5;
+      this.speed = 0.1;
       this.progress = 0;
       this.loop = true;
       this.selected = false;
@@ -214,10 +214,10 @@
   }
 
   class World {
-    constructor(cols, rows, tileSize, palette) {
-      this.cols = cols;
-      this.rows = rows;
-      this.tileSize = tileSize;
+    constructor(cols, rows, palette, bounds = { minX: 0, minY: 0, maxX: 1, maxY: 1 }) {
+      this.gridCols = cols;
+      this.gridRows = rows;
+      this.bounds = { ...bounds };
       this.setPalette(palette);
       this.grid = [];
       for (let r = 0; r < rows; r++) {
@@ -237,20 +237,45 @@
       this.palette = palette;
       this.defaultTileId = palette.defaultTileId;
     }
-    paintTile(col, row, tileId) {
-      if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return;
+    get width() {
+      return this.bounds.maxX - this.bounds.minX;
+    }
+    get height() {
+      return this.bounds.maxY - this.bounds.minY;
+    }
+    get cellWidth() {
+      return this.width / this.gridCols;
+    }
+    get cellHeight() {
+      return this.height / this.gridRows;
+    }
+    clampToBounds(x, y) {
+      const clampedX = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, x));
+      const clampedY = Math.min(this.bounds.maxY, Math.max(this.bounds.minY, y));
+      return { x: clampedX, y: clampedY };
+    }
+    paintTile(nx, ny, tileId) {
+      if (nx < this.bounds.minX || nx > this.bounds.maxX || ny < this.bounds.minY || ny > this.bounds.maxY) return;
       if (!this.palette.byId[tileId]) return;
+      const col = Math.floor((nx - this.bounds.minX) / this.cellWidth);
+      const row = Math.floor((ny - this.bounds.minY) / this.cellHeight);
+      if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return;
       this.grid[row][col] = tileId;
     }
     addCart() {
       const cart = new Cart(this.nextCartId++);
-      cart.position = { x: this.cols / 2, y: this.rows / 2 };
+      cart.position = {
+        x: this.bounds.minX + this.width / 2,
+        y: this.bounds.minY + this.height / 2
+      };
+      cart.speed = 5 / this.gridCols;
       this.carts.push(cart);
       return cart;
     }
     selectCartAt(wx, wy) {
       let selected = null;
-      let minDistSq = 0.5 * 0.5;
+      const selectionRadius = Math.min(this.cellWidth, this.cellHeight) * 0.75;
+      let minDistSq = selectionRadius * selectionRadius;
       for (const cart of this.carts) {
         const dx = cart.position.x - wx;
         const dy = cart.position.y - wy;
@@ -280,14 +305,16 @@
     }
     serialize() {
       return {
-        cols: this.cols,
-        rows: this.rows,
-        tileSize: this.tileSize,
+        bounds: { ...this.bounds },
+        gridCols: this.gridCols,
+        gridRows: this.gridRows,
+        cols: this.gridCols,
+        rows: this.gridRows,
         grid: this.grid,
         carts: this.carts.map(c => ({
           id: c.id,
-          path: c.path,
-          position: c.position,
+          path: c.path.map(p => ({ x: p.x, y: p.y })),
+          position: { x: c.position.x, y: c.position.y },
           speed: c.speed,
           progress: c.progress,
           loop: c.loop
@@ -295,24 +322,59 @@
       };
     }
     deserialize(data) {
-      this.cols = data.cols;
-      this.rows = data.rows;
-      this.tileSize = data.tileSize;
-      this.grid = data.grid.map(row => row.map(id => this.palette.byId[id] ? id : this.defaultTileId));
+      const cols = data.gridCols ?? data.cols ?? this.gridCols;
+      const rows = data.gridRows ?? data.rows ?? this.gridRows;
+      this.gridCols = cols;
+      this.gridRows = rows;
+      this.bounds = data.bounds ? { ...data.bounds } : { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+      const legacyTileSize = data.tileSize;
+      const isLegacy = legacyTileSize !== undefined && !data.bounds;
+      const incomingGrid = Array.isArray(data.grid) ? data.grid : [];
+      this.grid = [];
+      for (let r = 0; r < this.gridRows; r++) {
+        const sourceRow = incomingGrid[r] || [];
+        const row = [];
+        for (let c = 0; c < this.gridCols; c++) {
+          const tileId = sourceRow[c];
+          row.push(this.palette.byId[tileId] ? tileId : this.defaultTileId);
+        }
+        this.grid.push(row);
+      }
       this.carts = [];
       this.nextCartId = 1;
-      for (const cd of data.carts) {
-        const cart = new Cart(cd.id);
-        cart.path = cd.path;
-        cart.position = cd.position;
-        cart.speed = cd.speed;
-        cart.progress = cd.progress;
-        cart.loop = cd.loop;
+      const carts = Array.isArray(data.carts) ? data.carts : [];
+      for (const cd of carts) {
+        const id = cd.id ?? this.nextCartId++;
+        const cart = new Cart(id);
+        cart.speed = 5 / this.gridCols;
+        const convertPoint = (pt) => {
+          if (!pt) return { x: this.bounds.minX + this.width / 2, y: this.bounds.minY + this.height / 2 };
+          if (isLegacy) {
+            return {
+              x: this.bounds.minX + (pt.x / this.gridCols) * this.width,
+              y: this.bounds.minY + (pt.y / this.gridRows) * this.height
+            };
+          }
+          return { x: pt.x, y: pt.y };
+        };
+        cart.path = Array.isArray(cd.path) ? cd.path.map(convertPoint) : [];
+        cart.position = convertPoint(cd.position);
+        cart.speed = isLegacy && typeof cd.speed === 'number'
+          ? cd.speed / this.gridCols
+          : (typeof cd.speed === 'number' ? cd.speed : cart.speed);
+        cart.progress = isLegacy ? 0 : (typeof cd.progress === 'number' ? cd.progress : 0);
+        cart.loop = cd.loop !== undefined ? cd.loop : cart.loop;
         if (cart.path.length >= 2) {
           cart.computeSegments();
-          cart.update(0);
+          if (!isLegacy && cart.progress > 0) {
+            cart.progress = Math.min(cart.totalLength, cart.progress);
+            cart.update(0);
+          } else {
+            cart.progress = 0;
+            cart.update(0);
+          }
         }
-        this.nextCartId = Math.max(this.nextCartId, cd.id + 1);
+        this.nextCartId = Math.max(this.nextCartId, cart.id + 1);
         this.carts.push(cart);
       }
     }
@@ -344,12 +406,30 @@
       this.ctx = canvas.getContext('2d');
       this.world = world;
       this.camera = new Camera();
-      this.resize();
+      this._cameraFitted = false;
+      this.resize(true);
       window.addEventListener('resize', () => this.resize());
     }
-    resize() {
+    resize(forceFit = false) {
       this.canvas.width = window.innerWidth;
       this.canvas.height = window.innerHeight;
+      if (forceFit || !this._cameraFitted) {
+        this.fitCameraToWorld();
+      }
+    }
+    fitCameraToWorld() {
+      const worldWidth = this.world.width;
+      const worldHeight = this.world.height;
+      if (worldWidth === 0 || worldHeight === 0) return;
+      const scaleX = this.canvas.width / worldWidth;
+      const scaleY = this.canvas.height / worldHeight;
+      const scale = Math.min(scaleX, scaleY);
+      this.camera.scale = scale;
+      const offsetX = -this.world.bounds.minX * scale;
+      const offsetY = -this.world.bounds.minY * scale;
+      this.camera.x = (this.canvas.width - worldWidth * scale) / 2 + offsetX;
+      this.camera.y = (this.canvas.height - worldHeight * scale) / 2 + offsetY;
+      this._cameraFitted = true;
     }
     draw() {
       const ctx = this.ctx;
@@ -367,24 +447,38 @@
     }
     drawTiles(ctx) {
       const world = this.world;
-      const ts = world.tileSize;
-      const colStart = Math.max(0, Math.floor(-this.camera.x / (this.camera.scale * ts)));
-      const colEnd = Math.min(world.cols - 1, Math.ceil((this.canvas.width - this.camera.x) / (this.camera.scale * ts)));
-      const rowStart = Math.max(0, Math.floor(-this.camera.y / (this.camera.scale * ts)));
-      const rowEnd = Math.min(world.rows - 1, Math.ceil((this.canvas.height - this.camera.y) / (this.camera.scale * ts)));
+      const cellWidth = world.cellWidth;
+      const cellHeight = world.cellHeight;
+      if (!isFinite(cellWidth) || !isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
+      const left = -this.camera.x / this.camera.scale;
+      const top = -this.camera.y / this.camera.scale;
+      const visibleWidth = this.canvas.width / this.camera.scale;
+      const visibleHeight = this.canvas.height / this.camera.scale;
+      const colStart = Math.max(0, Math.floor((left - world.bounds.minX) / cellWidth));
+      const colEnd = Math.min(
+        world.gridCols - 1,
+        Math.floor(((left + visibleWidth) - world.bounds.minX - 1e-9) / cellWidth)
+      );
+      const rowStart = Math.max(0, Math.floor((top - world.bounds.minY) / cellHeight));
+      const rowEnd = Math.min(
+        world.gridRows - 1,
+        Math.floor(((top + visibleHeight) - world.bounds.minY - 1e-9) / cellHeight)
+      );
+      if (colEnd < colStart || rowEnd < rowStart) return;
       for (let row = rowStart; row <= rowEnd; row++) {
         for (let col = colStart; col <= colEnd; col++) {
           const tileId = world.grid[row][col];
           const tile = world.getTileDescriptor(tileId);
           if (!tile) continue;
           ctx.fillStyle = tile.color;
-          ctx.fillRect(col * ts, row * ts, ts, ts);
+          const x = world.bounds.minX + col * cellWidth;
+          const y = world.bounds.minY + row * cellHeight;
+          ctx.fillRect(x, y, cellWidth, cellHeight);
         }
       }
     }
     drawPaths(ctx) {
       const world = this.world;
-      const ts = world.tileSize;
       ctx.strokeStyle = 'rgba(0,0,0,0.6)';
       ctx.lineWidth = 1 / this.camera.scale;
       for (const cart of world.carts) {
@@ -392,23 +486,20 @@
         ctx.beginPath();
         for (let i = 0; i < cart.path.length; i++) {
           const p = cart.path[i];
-          const px = p.x * ts;
-          const py = p.y * ts;
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
       }
     }
     drawCarts(ctx) {
       const world = this.world;
-      const ts = world.tileSize;
+      const baseRadius = Math.min(world.cellWidth, world.cellHeight);
+      if (!isFinite(baseRadius) || baseRadius <= 0) return;
+      const radius = baseRadius * 0.3;
       for (const cart of world.carts) {
         ctx.fillStyle = cart.selected ? 'yellow' : 'red';
-        const px = cart.position.x * ts;
-        const py = cart.position.y * ts;
-        const radius = ts * 0.3;
         ctx.beginPath();
-        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.arc(cart.position.x, cart.position.y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -440,21 +531,18 @@
         this.lastPanY = e.clientY;
       } else if (e.button === 0) {
         const worldPos = this.renderer.camera.screenToWorld(x, y);
-        const ts = this.world.tileSize;
-        const worldTileX = worldPos.x / ts;
-        const worldTileY = worldPos.y / ts;
         if (e.shiftKey) {
           const cart = this.world.selectedCart;
           if (cart) {
-            cart.path.push({ x: worldTileX, y: worldTileY });
+            const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+            cart.path.push(point);
             if (cart.path.length >= 2) cart.computeSegments();
           }
         } else {
-          const selected = this.world.selectCartAt(worldTileX, worldTileY);
+          const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+          const selected = this.world.selectCartAt(point.x, point.y);
           if (!selected) {
-            const col = Math.floor(worldPos.x / ts);
-            const row = Math.floor(worldPos.y / ts);
-            this.world.paintTile(col, row, this.currentTileId);
+            this.world.paintTile(point.x, point.y, this.currentTileId);
           }
         }
       }
@@ -472,10 +560,8 @@
         const px = e.clientX - rect.left;
         const py = e.clientY - rect.top;
         const worldPos = this.renderer.camera.screenToWorld(px, py);
-        const ts = this.world.tileSize;
-        const col = Math.floor(worldPos.x / ts);
-        const row = Math.floor(worldPos.y / ts);
-        this.world.paintTile(col, row, this.currentTileId);
+        const point = this.world.clampToBounds(worldPos.x, worldPos.y);
+        this.world.paintTile(point.x, point.y, this.currentTileId);
       }
     }
     onPointerUp(e) {
@@ -524,11 +610,10 @@
   async function init() {
     try {
       const { palette } = await loadAssets();
-      const TILE_SIZE = 32;
       const COLS = 50;
       const ROWS = 50;
       const canvas = document.getElementById('canvas');
-      const world = new World(COLS, ROWS, TILE_SIZE, palette);
+      const world = new World(COLS, ROWS, palette);
       const renderer = new Renderer(canvas, world);
       const input = new InputHandler(canvas, renderer, world);
       input.currentTileId = palette.defaultTileId;
@@ -576,6 +661,7 @@
           try {
             const data = JSON.parse(ev.target.result);
             world.deserialize(data);
+            renderer.fitCameraToWorld();
           } catch (ex) {
             alert('Failed to load world: ' + ex.message);
           }

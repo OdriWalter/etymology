@@ -4,8 +4,6 @@ import { Renderer } from './renderer.js';
 import { Input } from './input.js';
 import { loadAssets } from './assets.js';
 
-// Parameters for the world grid
-const TILE_SIZE = 32;
 const COLS = 50;
 const ROWS = 50;
 
@@ -34,7 +32,7 @@ async function init() {
   try {
     const { palette } = await loadAssets();
     const canvas = document.getElementById('canvas');
-    const world = new World(COLS, ROWS, TILE_SIZE, palette);
+    const world = new World(COLS, ROWS, palette);
     const renderer = new Renderer(canvas, world);
     const input = new Input(canvas, renderer, world);
     input.currentTileId = palette.defaultTileId;
@@ -86,6 +84,7 @@ async function init() {
         try {
           const data = JSON.parse(ev.target.result);
           world.deserialize(data);
+          renderer.fitCameraToWorld();
         } catch (ex) {
           alert('Failed to load world: ' + ex.message);
         }
