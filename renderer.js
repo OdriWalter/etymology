@@ -142,6 +142,7 @@ export class Renderer {
     if (!zoomInRange(layer, view.zoom)) return;
     const grid = layer.grid;
     if (!grid) return;
+    const adjacencyGrid = layer.adjacency;
     const cellWidth = this.world.cellWidth;
     const cellHeight = this.world.cellHeight;
     if (!isFinite(cellWidth) || !isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
@@ -181,6 +182,25 @@ export class Renderer {
         } else {
           ctx.fillStyle = tile.color || '#000000';
           ctx.fillRect(x, y, cellWidth, cellHeight);
+        }
+      }
+    }
+
+    if (adjacencyGrid) {
+      for (let row = rowStart; row <= rowEnd; row++) {
+        for (let col = colStart; col <= colEnd; col++) {
+          const overlays = adjacencyGrid[row]?.[col];
+          if (!overlays) continue;
+          const x = this.world.bounds.minX + col * cellWidth;
+          const y = this.world.bounds.minY + row * cellHeight;
+          for (const overlay of overlays) {
+            const glyphKey = overlay?.glyph;
+            if (!glyphKey) continue;
+            const glyph = this.glyphs?.byKey?.[glyphKey];
+            if (glyph?.canvas) {
+              ctx.drawImage(glyph.canvas, x, y, cellWidth, cellHeight);
+            }
+          }
         }
       }
     }

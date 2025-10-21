@@ -55,6 +55,102 @@ export default {
       "height": 8,
       "palette": [null, "#A1887F", "#8D6E63", "#BCAAA4"],
       "rle": "2*1 2*2 1*3 2*2 2*1 1*2 1*3 1*2 1*1 1*2 1*3 2*2 1*3 1*1 2*2 1*3 5*2 1*3 2*2 1*3 1*1 1*3 1*1 2*2 1*3 2*2 1*3 1*2 1*3 1*2 1*1 1*2 1*3 1*1 3*2 1*3 3*2 1*3 1*2 1*1 2*2 1*3 1*1 2*2 1*1"
+    },
+    {
+      "key": "grass_edge_water_n",
+      "name": "Grass Edge Water North",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#2196F3", "#29B6F6"],
+      "rle": "8*1 8*1 8*2 8*0 8*0 8*0 8*0 8*0"
+    },
+    {
+      "key": "grass_edge_water_s",
+      "name": "Grass Edge Water South",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#2196F3", "#29B6F6"],
+      "rle": "8*0 8*0 8*0 8*0 8*0 8*2 8*1 8*1"
+    },
+    {
+      "key": "grass_edge_water_e",
+      "name": "Grass Edge Water East",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#2196F3", "#29B6F6"],
+      "rle": "6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1"
+    },
+    {
+      "key": "grass_edge_water_w",
+      "name": "Grass Edge Water West",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#2196F3", "#29B6F6"],
+      "rle": "1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0"
+    },
+    {
+      "key": "grass_edge_road_n",
+      "name": "Grass Edge Road North",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8D6E63", "#BCAAA4"],
+      "rle": "8*1 8*2 8*0 8*0 8*0 8*0 8*0 8*0"
+    },
+    {
+      "key": "grass_edge_road_s",
+      "name": "Grass Edge Road South",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8D6E63", "#BCAAA4"],
+      "rle": "8*0 8*0 8*0 8*0 8*0 8*0 8*2 8*1"
+    },
+    {
+      "key": "grass_edge_road_e",
+      "name": "Grass Edge Road East",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8D6E63", "#BCAAA4"],
+      "rle": "6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1"
+    },
+    {
+      "key": "grass_edge_road_w",
+      "name": "Grass Edge Road West",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8D6E63", "#BCAAA4"],
+      "rle": "1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0"
+    },
+    {
+      "key": "road_edge_grass_n",
+      "name": "Road Edge Grass North",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8BC34A", "#AED581"],
+      "rle": "8*1 8*2 8*0 8*0 8*0 8*0 8*0 8*0"
+    },
+    {
+      "key": "road_edge_grass_s",
+      "name": "Road Edge Grass South",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8BC34A", "#AED581"],
+      "rle": "8*0 8*0 8*0 8*0 8*0 8*0 8*2 8*1"
+    },
+    {
+      "key": "road_edge_grass_e",
+      "name": "Road Edge Grass East",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8BC34A", "#AED581"],
+      "rle": "6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1"
+    },
+    {
+      "key": "road_edge_grass_w",
+      "name": "Road Edge Grass West",
+      "width": 8,
+      "height": 8,
+      "palette": [null, "#8BC34A", "#AED581"],
+      "rle": "1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0 1*2 1*1 6*0"
     }
   ]
 };
