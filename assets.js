@@ -1,3 +1,6 @@
+import embeddedPaletteData from './data/paletteData.js';
+import embeddedGlyphData from './data/glyphsData.js';
+
 const PALETTE_PATH = './data/palette.json';
 const GLYPHS_PATH = './data/glyphs.json';
 
@@ -130,7 +133,17 @@ function buildGlyphRegistry(data) {
   return { byKey: glyphs, list };
 }
 
-export async function loadAssets() {
+function loadEmbeddedAssetJson() {
+  if (!embeddedPaletteData) {
+    throw new Error('Embedded palette data missing');
+  }
+  if (!embeddedGlyphData) {
+    throw new Error('Embedded glyph data missing');
+  }
+  return { paletteJson: embeddedPaletteData, glyphJson: embeddedGlyphData };
+}
+
+async function fetchAssetJson() {
   const [paletteRes, glyphRes] = await Promise.all([
     fetch(PALETTE_PATH),
     fetch(GLYPHS_PATH)
@@ -145,7 +158,52 @@ export async function loadAssets() {
     paletteRes.json(),
     glyphRes.json()
   ]);
+  return { paletteJson, glyphJson };
+}
+
+function logAssetSummary(palette, glyphs, source) {
+  const tileCount = palette.tiles.length;
+  const glyphCount = glyphs.list.length;
+  const message = `[assets] Loaded ${tileCount} palette tiles and ${glyphCount} glyphs (${source}).`;
+  if (tileCount === 0 || glyphCount === 0) {
+    console.warn(message);
+  } else {
+    console.info(message);
+  }
+}
+
+export async function loadAssets(options = {}) {
+  const preferFetch = options.preferFetch === true;
+  let paletteJson;
+  let glyphJson;
+  const errors = [];
+
+  if (!preferFetch) {
+    try {
+      ({ paletteJson, glyphJson } = loadEmbeddedAssetJson());
+    } catch (err) {
+      errors.push(err);
+      console.warn(`[assets] Embedded asset load failed: ${err.message}`);
+    }
+  }
+
+  let source = 'embedded data';
+  if (!paletteJson || !glyphJson) {
+    try {
+      ({ paletteJson, glyphJson } = await fetchAssetJson());
+      source = 'network fetch';
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+
+  if (!paletteJson || !glyphJson) {
+    const details = errors.map((err) => err && err.message ? err.message : String(err)).join('; ');
+    throw new Error(`Unable to load palette/glyph assets: ${details || 'unknown error'}`);
+  }
+
   const palette = buildPaletteLUT(paletteJson);
   const glyphs = buildGlyphRegistry(glyphJson);
+  logAssetSummary(palette, glyphs, source);
   return { palette, glyphs };
 }
