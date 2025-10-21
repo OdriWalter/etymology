@@ -53,6 +53,9 @@
       if (this.progress >= total) {
         if (this.loop) {
           this.progress = this.progress % total;
+          if (Math.abs(this.progress) < 1e-9) {
+            this.progress = 0;
+          }
         } else {
           this.progress = total - 0.0001;
         }
@@ -426,12 +429,24 @@
       reader.readAsText(file);
     };
     // Animation loop
+    const FIXED_STEP = 1 / 60;
+    const MAX_FRAME_TIME = 0.25;
+    let accumulator = 0;
     let lastTime = performance.now();
     function frame(time) {
-      const dt = (time - lastTime) / 1000;
+      let frameTime = (time - lastTime) / 1000;
       lastTime = time;
+      if (frameTime > MAX_FRAME_TIME) {
+        frameTime = MAX_FRAME_TIME;
+      }
       if (playing) {
-        world.update(dt);
+        accumulator += frameTime;
+        while (accumulator >= FIXED_STEP) {
+          world.update(FIXED_STEP);
+          accumulator -= FIXED_STEP;
+        }
+      } else {
+        accumulator = 0;
       }
       renderer.draw();
       requestAnimationFrame(frame);

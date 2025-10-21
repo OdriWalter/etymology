@@ -86,13 +86,27 @@ loadInput.onchange = () => {
 };
 
 // Main animation loop
+const FIXED_STEP = 1 / 60;
+const MAX_FRAME_TIME = 0.25; // prevent spiral of death
+let accumulator = 0;
 let lastTime = performance.now();
 function loop(time) {
-  const dt = (time - lastTime) / 1000;
+  let frameTime = (time - lastTime) / 1000;
   lastTime = time;
-  if (playing) {
-    world.update(dt);
+  if (frameTime > MAX_FRAME_TIME) {
+    frameTime = MAX_FRAME_TIME;
   }
+
+  if (playing) {
+    accumulator += frameTime;
+    while (accumulator >= FIXED_STEP) {
+      world.update(FIXED_STEP);
+      accumulator -= FIXED_STEP;
+    }
+  } else {
+    accumulator = 0;
+  }
+
   renderer.draw();
   requestAnimationFrame(loop);
 }
