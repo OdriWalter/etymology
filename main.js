@@ -97,6 +97,13 @@ async function init() {
       cart.selected = true;
     };
 
+    const fillAllBtn = document.getElementById('fillAll');
+    if (fillAllBtn) {
+      fillAllBtn.onclick = () => {
+        world.fillAllTiles(input.currentTileId);
+      };
+    }
+
     // Play/pause button
     const playPauseBtn = document.getElementById('playPause');
     let playing = false;

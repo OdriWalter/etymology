@@ -418,6 +418,19 @@ export class World {
     this._recalculateAdjacencyAround(row, col);
   }
 
+  fillAllTiles(tileId) {
+    if (!this.palette?.byId?.[tileId]) return;
+    if (!this.grid || !this.grid.length) return;
+    for (let row = 0; row < this.grid.length; row++) {
+      const gridRow = this.grid[row];
+      if (!Array.isArray(gridRow)) continue;
+      for (let col = 0; col < gridRow.length; col++) {
+        gridRow[col] = tileId;
+      }
+    }
+    this._recalculateAllAdjacency();
+  }
+
   addCart() {
     const cart = new Cart(this.nextCartId++);
     cart.position = {
