@@ -560,9 +560,12 @@
       this.layers.terrain.zoomMin = this._normaliseZoomMin(terrainLayer.zoomMin);
       this.layers.terrain.zoomMax = this._normaliseZoomMax(terrainLayer.zoomMax);
       const incomingGrid = Array.isArray(terrainLayer.grid) ? terrainLayer.grid : Array.isArray(data.grid) ? data.grid : [];
+      const hasIncomingGrid = Array.isArray(incomingGrid) && incomingGrid.length > 0;
       const incomingSeed = data.seed ?? terrainLayer.params?.seed;
       if (incomingSeed != null) {
         this._setSeedInternal(incomingSeed);
+      }
+      if (!hasIncomingGrid) {
         this.regenerateTerrain();
       } else {
         this.grid = [];
