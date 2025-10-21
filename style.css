@@ -1,0 +1,51 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  font-family: sans-serif;
+}
+
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  z-index: 10;
+}
+
+#palette {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+#palette button {
+  width: 70px;
+  height: 28px;
+  margin: 2px;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#addCart,
+#playPause,
+#saveBtn,
+#loadBtn {
+  margin: 2px;
+  padding: 4px 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
