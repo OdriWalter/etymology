@@ -55,6 +55,9 @@ export class Cart {
     if (this.progress >= total) {
       if (this.loop) {
         this.progress = this.progress % total;
+        if (Math.abs(this.progress) < 1e-9) {
+          this.progress = 0;
+        }
       } else {
         this.progress = total - 0.0001;
       }
