@@ -155,16 +155,32 @@ export class Renderer {
       Math.floor(((top + visibleHeight) - this.world.bounds.minY - 1e-9) / cellHeight)
     );
     if (colEnd < colStart || rowEnd < rowStart) return;
+    const canAdjustSmoothing = 'imageSmoothingEnabled' in ctx;
+    const previousSmoothing = canAdjustSmoothing ? ctx.imageSmoothingEnabled : null;
+    if (canAdjustSmoothing) {
+      ctx.imageSmoothingEnabled = false;
+    }
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
         const tileId = grid[row][col];
         const tile = this.world.getTileDescriptor(tileId);
         if (!tile) continue;
-        ctx.fillStyle = tile.color;
         const x = this.world.bounds.minX + col * cellWidth;
         const y = this.world.bounds.minY + row * cellHeight;
-        ctx.fillRect(x, y, cellWidth, cellHeight);
+        const textureKey = tile.texture;
+        const textureGlyph = textureKey && this.glyphs && this.glyphs.byKey
+          ? this.glyphs.byKey[textureKey]
+          : null;
+        if (textureGlyph && textureGlyph.canvas) {
+          ctx.drawImage(textureGlyph.canvas, x, y, cellWidth, cellHeight);
+        } else {
+          ctx.fillStyle = tile.color || '#000000';
+          ctx.fillRect(x, y, cellWidth, cellHeight);
+        }
       }
+    }
+    if (canAdjustSmoothing) {
+      ctx.imageSmoothingEnabled = previousSmoothing;
     }
   }
 
