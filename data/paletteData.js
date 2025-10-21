@@ -1,0 +1,10 @@
+export default {
+  "defaultTile": "grass",
+  "tiles": [
+    { "key": "grass", "name": "Grass", "color": "#8BC34A", "texture": "grass_tile" },
+    { "key": "forest", "name": "Forest", "color": "#4CAF50", "texture": "forest_tile" },
+    { "key": "water", "name": "Water", "color": "#2196F3", "texture": "water_tile" },
+    { "key": "mountain", "name": "Mountain", "color": "#795548", "texture": "mountain_tile" },
+    { "key": "road", "name": "Road", "color": "#FF9800", "texture": "road_tile" }
+  ]
+};
