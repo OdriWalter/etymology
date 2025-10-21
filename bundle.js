@@ -1658,7 +1658,7 @@
       let lastTime = performance.now();
       requestAnimationFrame(loop);
     } catch (err) {
-      console.error("Failed to initialise engine", err);
+      console.error("Failed to initialize engine", err);
       const paletteDiv = document.getElementById("palette");
       paletteDiv.textContent = "Failed to load assets";
     }
