@@ -840,6 +840,8 @@
       this.x = 0;
       this.y = 0;
       this.scale = 1;
+      this.minScale = 0.01;
+      this.maxScale = Infinity;
     }
 
     screenToWorld(px, py) {
@@ -854,6 +856,23 @@
         x: wx * this.scale + this.x,
         y: wy * this.scale + this.y
       };
+    }
+
+    setScaleLimits(minScale, maxScale) {
+      if (Number.isFinite(minScale) && minScale > 0) {
+        this.minScale = minScale;
+      }
+      if (maxScale == null) {
+        this.maxScale = Infinity;
+      } else if (Number.isFinite(maxScale) && maxScale >= this.minScale) {
+        this.maxScale = maxScale;
+      }
+      if (this.scale < this.minScale) {
+        this.scale = this.minScale;
+      }
+      if (this.scale > this.maxScale) {
+        this.scale = this.maxScale;
+      }
     }
   }
 
@@ -908,6 +927,9 @@
       const scaleY = this.canvas.height / worldHeight;
       const scale = Math.min(scaleX, scaleY);
       this.camera.scale = scale;
+      const minScale = Math.max(scale * 0.05, 1e-4);
+      const maxScale = Math.max(scale * 40, minScale);
+      this.camera.setScaleLimits(minScale, maxScale);
       const offsetX = -this.world.bounds.minX * scale;
       const offsetY = -this.world.bounds.minY * scale;
       this.camera.x = (this.canvas.width - worldWidth * scale) / 2 + offsetX;
@@ -1292,7 +1314,9 @@
       } else {
         newScale /= scaleFactor;
       }
-      newScale = Math.min(Math.max(newScale, 0.2), 5);
+      const minScale = Number.isFinite(camera.minScale) && camera.minScale > 0 ? camera.minScale : 0.2;
+      const maxScale = Number.isFinite(camera.maxScale) && camera.maxScale > minScale ? camera.maxScale : Infinity;
+      newScale = Math.max(minScale, Math.min(newScale, maxScale));
       camera.scale = newScale;
       camera.x = px - worldBefore.x * newScale;
       camera.y = py - worldBefore.y * newScale;

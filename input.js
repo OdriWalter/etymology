@@ -86,7 +86,9 @@ export class Input {
     } else {
       newScale /= scaleFactor;
     }
-    newScale = Math.min(Math.max(newScale, 0.2), 5);
+    const minScale = Number.isFinite(camera.minScale) && camera.minScale > 0 ? camera.minScale : 0.2;
+    const maxScale = Number.isFinite(camera.maxScale) && camera.maxScale > minScale ? camera.maxScale : Infinity;
+    newScale = Math.max(minScale, Math.min(newScale, maxScale));
     camera.scale = newScale;
     camera.x = px - worldBefore.x * newScale;
     camera.y = py - worldBefore.y * newScale;
