@@ -201,6 +201,7 @@ async function init() {
     const tilesetLoader = createTilesetLoader({
       quadtree: world.getTerrainLayer().quadtree,
       worldSeed: world.seed,
+      editor: world.editor,
       onTileHydrated: (tile) => {
         lastLoadedTile = tile;
         indexTile(tile);

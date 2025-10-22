@@ -1,4 +1,5 @@
 import { QuadtreeWorld } from './world/quadtreeWorld.js';
+import { WorldEditor } from './world/editor.js';
 
 const DEFAULT_ZOOM_MIN = Number.NEGATIVE_INFINITY;
 const DEFAULT_ZOOM_MAX = null;
@@ -65,6 +66,20 @@ function clonePlacement(placement) {
   const cloned = { ...placement };
   if (placement.position) {
     cloned.position = clonePoint(placement.position);
+  }
+  return cloned;
+}
+
+function cloneTerrainPatch(patch) {
+  if (!patch) return null;
+  const cloned = { ...patch };
+  if (Array.isArray(patch.polygon)) {
+    cloned.polygon = patch.polygon.map(clonePoint);
+  }
+  if (Array.isArray(patch.polygons)) {
+    cloned.polygons = patch.polygons
+      .map((ring) => Array.isArray(ring) ? ring.map(clonePoint) : [])
+      .filter((ring) => ring.length > 0);
   }
   return cloned;
 }
@@ -173,6 +188,8 @@ export class World {
       maxLod,
       zoomThresholds
     });
+    this.editor = new WorldEditor();
+    this._editedNodes = new Set();
 
     this.layers = {
       terrain: {
@@ -254,6 +271,10 @@ export class World {
     const zoomThresholds = this.terrain.zoomThresholds;
     this.terrain = new QuadtreeWorld({ bounds: this.bounds, maxLod, zoomThresholds });
     this.layers.terrain.quadtree = this.terrain;
+    if (this.editor) {
+      this.editor.clearAll();
+    }
+    this._editedNodes.clear();
     if (this.autoSeed) {
       this._seedTerrain();
     }
@@ -377,6 +398,146 @@ export class World {
     return this.layers.effect;
   }
 
+  addTerrainPatch(nodeId, patch = {}) {
+    return this._addNodeFeature('terrain', nodeId, { ...patch });
+  }
+
+  updateTerrainPatch(nodeId, patchId, updates = {}) {
+    return this._updateNodeFeature('terrain', nodeId, patchId, updates);
+  }
+
+  removeTerrainPatch(nodeId, patchId) {
+    return this._removeNodeFeature('terrain', nodeId, patchId);
+  }
+
+  addVectorFeature(nodeId, geometry = {}, metadata = {}) {
+    const feature = this._composeFeatureData(geometry, metadata);
+    return this._addNodeFeature('vector', nodeId, feature);
+  }
+
+  updateVectorFeature(nodeId, featureId, updates = {}) {
+    return this._updateNodeFeature('vector', nodeId, featureId, updates);
+  }
+
+  removeVectorFeature(nodeId, featureId) {
+    return this._removeNodeFeature('vector', nodeId, featureId);
+  }
+
+  addParcelFeature(nodeId, geometry = {}, metadata = {}) {
+    const feature = this._composeFeatureData(geometry, metadata);
+    return this._addNodeFeature('parcels', nodeId, feature);
+  }
+
+  updateParcelFeature(nodeId, featureId, updates = {}) {
+    return this._updateNodeFeature('parcels', nodeId, featureId, updates);
+  }
+
+  removeParcelFeature(nodeId, featureId) {
+    return this._removeNodeFeature('parcels', nodeId, featureId);
+  }
+
+  addBuildingFeature(nodeId, geometry = {}, metadata = {}) {
+    const feature = this._composeFeatureData(geometry, metadata);
+    return this._addNodeFeature('buildings', nodeId, feature);
+  }
+
+  updateBuildingFeature(nodeId, featureId, updates = {}) {
+    return this._updateNodeFeature('buildings', nodeId, featureId, updates);
+  }
+
+  removeBuildingFeature(nodeId, featureId) {
+    return this._removeNodeFeature('buildings', nodeId, featureId);
+  }
+
+  consumeEditedNodes() {
+    const edited = Array.from(this._editedNodes);
+    this._editedNodes.clear();
+    return edited;
+  }
+
+  _composeFeatureData(geometry, metadata) {
+    const base = {};
+    if (geometry && typeof geometry === 'object') {
+      Object.assign(base, geometry);
+    }
+    if (metadata && typeof metadata === 'object') {
+      Object.assign(base, metadata);
+    }
+    return base;
+  }
+
+  _addNodeFeature(type, nodeId, feature) {
+    if (!this.editor || !nodeId) {
+      return null;
+    }
+    const node = this.terrain.getNode(nodeId);
+    if (!node) {
+      return null;
+    }
+    const stored = this.editor.addFeature(nodeId, type, feature);
+    this._syncEditorPayload(nodeId);
+    return stored;
+  }
+
+  _updateNodeFeature(type, nodeId, featureId, updates) {
+    if (!this.editor || !nodeId || !featureId) {
+      return null;
+    }
+    const node = this.terrain.getNode(nodeId);
+    if (!node) {
+      return null;
+    }
+    const updated = this.editor.updateFeature(nodeId, type, featureId, updates);
+    if (updated) {
+      this._syncEditorPayload(nodeId);
+    }
+    return updated;
+  }
+
+  _removeNodeFeature(type, nodeId, featureId) {
+    if (!this.editor || !nodeId || !featureId) {
+      return false;
+    }
+    const node = this.terrain.getNode(nodeId);
+    if (!node) {
+      return false;
+    }
+    const removed = this.editor.removeFeature(nodeId, type, featureId);
+    if (removed) {
+      this._syncEditorPayload(nodeId);
+    }
+    return removed;
+  }
+
+  _syncEditorPayload(nodeId) {
+    if (!this.editor) {
+      return null;
+    }
+    const combined = this.editor.getCombinedPayload(nodeId);
+    this.terrain.setNodePayload(nodeId, {
+      terrainPatches: combined.terrainPatches,
+      vector: combined.vector,
+      parcels: combined.parcels,
+      buildings: combined.buildings
+    });
+    this.terrain.updateNode(nodeId, (node) => {
+      const layers = { ...(node.metadata.layers || {}) };
+      const terrainLayer = { ...(layers.terrain || {}) };
+      terrainLayer.patches = combined.terrainPatches.map(cloneTerrainPatch);
+      layers.terrain = terrainLayer;
+      node.metadata.layers = layers;
+    });
+    this._flagNodeEdited(nodeId);
+    return combined;
+  }
+
+  _flagNodeEdited(nodeId) {
+    if (!nodeId) {
+      return;
+    }
+    this._editedNodes.add(nodeId);
+  }
+
   serialize() {
     const records = [];
     records.push({
@@ -432,6 +593,10 @@ export class World {
     });
     this.layers.terrain.quadtree = this.terrain;
     this.terrain.loadFromStream(nodeRecords);
+    if (this.editor) {
+      this.editor.clearAll();
+    }
+    this._editedNodes.clear();
 
     this.layers.vector.features = Array.isArray(worldRecord.vectorFeatures)
       ? worldRecord.vectorFeatures.map(cloneFeature).filter(Boolean)

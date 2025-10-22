@@ -73,7 +73,8 @@ export class TilesetLoader {
     palette,
     quadtree,
     worldSeed = 0,
-    onTileHydrated = null
+    onTileHydrated = null,
+    editor = null
   } = {}) {
     this.baseUrl = baseUrl.replace(/\/?$/, '/');
     this.fetchImpl = fetchImpl;
@@ -81,6 +82,7 @@ export class TilesetLoader {
     this.quadtree = quadtree || null;
     this.worldSeed = worldSeed >>> 0;
     this.onTileHydrated = typeof onTileHydrated === 'function' ? onTileHydrated : null;
+    this.editor = editor || null;
 
     this.index = null;
     this.cache = new Map();
@@ -191,21 +193,35 @@ export class TilesetLoader {
     const vectorFeatures = (tile.layers?.vectors?.features || []).map(cloneFeature).filter(Boolean);
     const parcelFeatures = (tile.layers?.parcels?.features || []).map(cloneFeature).filter(Boolean);
     const buildingFeatures = (tile.layers?.buildings?.features || []).map(cloneFeature).filter(Boolean);
-
-    this.quadtree.setNodePayload(node.id, {
-      terrain: terrainId,
+    const terrainPatches = cloneTerrainLayer({ patches: terrainLayer?.patches || [] })?.patches || [];
+    const sourcePayload = {
+      terrainPatches,
       vector: vectorFeatures,
       parcels: parcelFeatures,
       buildings: buildingFeatures
+    };
+    const combined = this.editor
+      ? this.editor.setSource(node.id, sourcePayload)
+      : sourcePayload;
+
+    this.quadtree.setNodePayload(node.id, {
+      terrain: terrainId,
+      terrainPatches: combined.terrainPatches,
+      vector: combined.vector,
+      parcels: combined.parcels,
+      buildings: combined.buildings
     });
 
+    const terrainMetadataSource = terrainLayer
+      ? { ...terrainLayer, patches: combined.terrainPatches }
+      : { tileKey: terrainKey, patches: combined.terrainPatches };
     const metadata = {
       ...tile.metadata,
       tileId: tile.id ?? null,
       lod: tile.lod,
       position: { lod: tile.lod, x: tile.x, y: tile.y },
       layers: {
-        terrain: terrainLayer,
+        terrain: cloneTerrainLayer(terrainMetadataSource),
         vectors: tile.layers?.vectors ? { ...tile.layers.vectors } : null,
         parcels: tile.layers?.parcels ? { ...tile.layers.parcels } : null,
         buildings: tile.layers?.buildings ? { ...tile.layers.buildings } : null

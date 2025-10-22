@@ -132,6 +132,14 @@ export class DiamondRenderer {
   }
 
   renderTerrain(ctx, nodes, view, colors) {
+    if (this.world && typeof this.world.consumeEditedNodes === 'function') {
+      const editedNodes = this.world.consumeEditedNodes();
+      if (Array.isArray(editedNodes) && editedNodes.length > 0) {
+        for (const nodeId of editedNodes) {
+          this.cache.delete(nodeId);
+        }
+      }
+    }
     this.visibleIds.clear();
     this.hitProxies.clear();
     const sorted = [...nodes].sort((a, b) => a.lod - b.lod);

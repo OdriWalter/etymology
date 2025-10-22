@@ -78,6 +78,19 @@ function defaultMetadata(lod, parentMetadata) {
   };
 }
 
+function cloneTerrainPatches(patches) {
+  if (!Array.isArray(patches)) {
+    return [];
+  }
+  return patches.map((patch) => ({
+    ...patch,
+    polygon: Array.isArray(patch.polygon) ? patch.polygon.map((point) => ({ x: point.x, y: point.y })) : null,
+    polygons: Array.isArray(patch.polygons)
+      ? patch.polygons.map((ring) => Array.isArray(ring) ? ring.map((point) => ({ x: point.x, y: point.y })) : [])
+      : null
+  }));
+}
+
 function cloneNode(node) {
   return {
     id: node.id,
@@ -88,6 +101,7 @@ function cloneNode(node) {
     metadata: { ...node.metadata, parentPath: [...node.metadata.parentPath], tags: [...node.metadata.tags] },
     payloadRefs: {
       terrain: node.payloadRefs.terrain,
+      terrainPatches: cloneTerrainPatches(node.payloadRefs.terrainPatches),
       vector: [...node.payloadRefs.vector],
       parcels: [...node.payloadRefs.parcels],
       buildings: [...node.payloadRefs.buildings],
@@ -127,6 +141,7 @@ export class QuadtreeWorld {
       metadata,
       payloadRefs: {
         terrain: null,
+        terrainPatches: [],
         vector: [],
         parcels: [],
         buildings: [],
@@ -156,6 +171,9 @@ export class QuadtreeWorld {
     return this.updateNode(nodeId, (node) => {
       node.payloadRefs = {
         terrain: payloadRefs.terrain ?? node.payloadRefs.terrain ?? null,
+        terrainPatches: Array.isArray(payloadRefs.terrainPatches)
+          ? cloneTerrainPatches(payloadRefs.terrainPatches)
+          : cloneTerrainPatches(node.payloadRefs.terrainPatches),
         vector: payloadRefs.vector ? [...payloadRefs.vector] : [...node.payloadRefs.vector],
         parcels: payloadRefs.parcels ? [...payloadRefs.parcels] : [...node.payloadRefs.parcels],
         buildings: payloadRefs.buildings ? [...payloadRefs.buildings] : [...node.payloadRefs.buildings],
@@ -337,6 +355,7 @@ export class QuadtreeWorld {
         metadata: { ...node.metadata, parentPath: [...node.metadata.parentPath], tags: [...node.metadata.tags] },
         payloadRefs: {
           terrain: node.payloadRefs.terrain,
+          terrainPatches: cloneTerrainPatches(node.payloadRefs.terrainPatches),
           vector: [...node.payloadRefs.vector],
           parcels: [...node.payloadRefs.parcels],
           buildings: [...node.payloadRefs.buildings],
@@ -392,6 +411,7 @@ export class QuadtreeWorld {
         },
         payloadRefs: {
           terrain: record.payloadRefs?.terrain ?? null,
+          terrainPatches: cloneTerrainPatches(record.payloadRefs?.terrainPatches),
           vector: Array.isArray(record.payloadRefs?.vector) ? [...record.payloadRefs.vector] : [],
           parcels: Array.isArray(record.payloadRefs?.parcels) ? [...record.payloadRefs.parcels] : [],
           buildings: Array.isArray(record.payloadRefs?.buildings) ? [...record.payloadRefs.buildings] : [],

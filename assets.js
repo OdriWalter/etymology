@@ -312,7 +312,8 @@ function createTilesetFactory(palette, options = {}) {
       palette,
       quadtree: mergedOptions.quadtree || null,
       worldSeed: mergedOptions.worldSeed != null ? mergedOptions.worldSeed : (options.worldSeed ?? 0),
-      onTileHydrated: mergedOptions.onTileHydrated || null
+      onTileHydrated: mergedOptions.onTileHydrated || null,
+      editor: mergedOptions.editor || null
     });
   };
 }
