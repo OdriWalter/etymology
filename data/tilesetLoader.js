@@ -23,6 +23,9 @@ function createMulberry32(seed) {
 function cloneFeature(feature) {
   if (!feature) return null;
   const cloned = { ...feature };
+  if (feature.properties && typeof feature.properties === 'object') {
+    cloned.properties = cloneProperties(feature.properties);
+  }
   if (Array.isArray(feature.line)) {
     cloned.line = feature.line.map(point => ({ x: point.x, y: point.y }));
   }
@@ -33,6 +36,20 @@ function cloneFeature(feature) {
     cloned.polygon = feature.polygon.map(point => ({ x: point.x, y: point.y }));
   }
   return cloned;
+}
+
+function cloneProperties(value) {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneProperties(item));
+  }
+  const result = {};
+  for (const key of Object.keys(value)) {
+    result[key] = cloneProperties(value[key]);
+  }
+  return result;
 }
 
 function cloneTerrainLayer(layer) {
