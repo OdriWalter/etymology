@@ -1,4 +1,4 @@
-// main.js - initialise quadtree world, renderer, input, and modern UI panels
+// main.js - initialise voxel world, renderer, input, and modern UI panels
 import { World, DEFAULT_WORLD_SEED } from './world.js';
 import { Renderer } from './renderer.js';
 import { InteractionController } from './input.js';
@@ -132,10 +132,10 @@ function toSearchRecord(node) {
   };
 }
 
-function buildSearchIndex(quadtree) {
+function buildSearchIndex(voxelWorld) {
   const records = new Map();
-  if (!quadtree) return records;
-  for (const node of quadtree.nodes.values()) {
+  if (!voxelWorld) return records;
+  for (const node of voxelWorld.nodes.values()) {
     const record = toSearchRecord(node);
     if (record) {
       records.set(record.id, record);
@@ -198,7 +198,7 @@ async function init() {
   const hoverSummary = document.getElementById('hoverSummary');
   const selectionSummary = document.getElementById('selectionSummary');
   const measurementInfo = document.getElementById('measurementInfo');
-  const quadtreeDepth = document.getElementById('quadtreeDepth');
+    const quadtreeDepth = document.getElementById('quadtreeDepth');
   const tileStatus = document.getElementById('tileStatus');
   const breadcrumbsTrail = document.getElementById('breadcrumbsTrail');
   const attributeList = document.getElementById('selectedAttributes');
@@ -242,7 +242,7 @@ async function init() {
 
     let lastLoadedTile = null;
     const tilesetLoader = createTilesetLoader({
-      quadtree: world.getTerrainLayer().quadtree,
+      voxelWorld: world.getTerrainLayer().voxelWorld,
       worldSeed: world.seed,
       editor: world.editor,
       onTileHydrated: (tile) => {
@@ -256,8 +256,8 @@ async function init() {
     const renderer = new Renderer(canvas, world, glyphs);
     const controller = new InteractionController(canvas, renderer, world);
 
-    const quadtree = world.getTerrainLayer().quadtree;
-    let searchIndex = buildSearchIndex(quadtree);
+    const voxelWorld = world.getTerrainLayer().voxelWorld;
+    let searchIndex = buildSearchIndex(voxelWorld);
     const authoringState = { target: null, dirty: false };
 
     function setAuthoringError(message) {
@@ -438,7 +438,7 @@ async function init() {
           data: combined || source
         };
       } else if (detail.node) {
-        const node = quadtree.getNode(detail.node.id);
+        const node = voxelWorld.getNode(detail.node.id);
         const metadata = node?.metadata || detail.node.metadata || {};
         if (authorNameInput) {
           authorNameInput.value = metadata.name || '';
@@ -472,7 +472,7 @@ async function init() {
     function refreshCurrentSelection() {
       if (!currentSelection) return;
       if (currentSelection.node?.id) {
-        const node = quadtree.getNode(currentSelection.node.id);
+        const node = voxelWorld.getNode(currentSelection.node.id);
         if (node) {
           currentSelection.node.metadata = node.metadata ? { ...node.metadata } : null;
         }
@@ -596,7 +596,7 @@ async function init() {
               }
             }
           }
-          searchIndex = buildSearchIndex(quadtree);
+          searchIndex = buildSearchIndex(voxelWorld);
         }
         refreshAuthoringSummary();
       });
@@ -623,7 +623,7 @@ async function init() {
     function updateDepthDisplay(node) {
       if (!quadtreeDepth) return;
       const depth = node?.lod ?? 0;
-      quadtreeDepth.textContent = `Depth · ${depth} / ${quadtree.maxLod}`;
+      quadtreeDepth.textContent = `Depth · ${depth} / ${voxelWorld.maxLod}`;
     }
 
     function updateHover(detail) {
@@ -678,7 +678,7 @@ async function init() {
     function indexTile(tile) {
       if (!tile) return;
       try {
-        const target = quadtree.ensureNodeForTile(tile.lod ?? 0, tile.x ?? 0, tile.y ?? 0);
+        const target = voxelWorld.ensureNodeForTile(tile.lod ?? 0, tile.x ?? 0, tile.y ?? 0);
         if (target) {
           const record = toSearchRecord(target);
           if (record) {
@@ -686,7 +686,7 @@ async function init() {
           }
           let parentId = target.parentId;
           while (parentId) {
-            const parent = quadtree.getNode(parentId);
+            const parent = voxelWorld.getNode(parentId);
             if (!parent) break;
             const parentRecord = toSearchRecord(parent);
             if (parentRecord) {
@@ -727,7 +727,7 @@ async function init() {
 
     async function focusNode(nodeId) {
       if (!nodeId) return;
-      const node = quadtree.getNode(nodeId);
+      const node = voxelWorld.getNode(nodeId);
       if (!node) {
         return;
       }
@@ -915,10 +915,10 @@ async function init() {
             }
             if (parsedHeader?.type === 'editorPatch') {
               world.applyEditorPatch(text);
-              searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
+              searchIndex = buildSearchIndex(world.getTerrainLayer().voxelWorld);
             } else {
               world.deserialize(text);
-              searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
+              searchIndex = buildSearchIndex(world.getTerrainLayer().voxelWorld);
               refreshLayerSummary();
               renderer.fitCameraToWorld();
             }
