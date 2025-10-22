@@ -1,4 +1,4 @@
-import { DiamondRenderer } from './renderer/diamondRenderer.js';
+import { VoxelRenderer } from './renderer/voxelRenderer.js';
 
 export class Camera {
   constructor() {
@@ -61,7 +61,7 @@ export class Renderer {
     this.camera = new Camera();
     this._cameraFitted = false;
     this.colors = defaultPaletteColors(world?.palette);
-    this.diamondRenderer = new DiamondRenderer(world, this.camera, glyphs);
+    this.voxelRenderer = new VoxelRenderer(world, this.camera, glyphs);
     this.layerVisibility = {
       terrain: true,
       vector: true,
@@ -88,7 +88,7 @@ export class Renderer {
     this.canvas.height = Math.floor(height * dpr);
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
-    this.diamondRenderer.setDevicePixelRatio(dpr);
+    this.voxelRenderer.setDevicePixelRatio(dpr);
     if (forceFit || !this._cameraFitted) {
       this.fitCameraToWorld();
     }
@@ -161,14 +161,23 @@ export class Renderer {
 
   drawTerrainPass(ctx, view) {
     if (!this.isLayerVisible('terrain')) return;
+    this.voxelRenderer.beginFrame(view);
     const nodes = this.world.getVisibleNodes(view, view.zoom) || [];
-    this.diamondRenderer.renderTerrain(ctx, nodes, view, this.colors);
+    const slices = [];
+    for (const node of nodes) {
+      const slice = this.voxelRenderer.getChunkSlice(node, this.colors);
+      if (slice) {
+        slices.push(slice);
+      }
+    }
+    this.voxelRenderer.drawTerrainSlices(ctx, slices, view);
+    this.voxelRenderer.endFrame();
   }
 
   drawVectorPass(ctx, view) {
     if (!this.isLayerVisible('vector')) return;
     const layer = this.world.getVectorLayer();
-    this.diamondRenderer.renderVectors(ctx, view, layer);
+    this.voxelRenderer.renderVectors(ctx, view, layer);
   }
 
   drawSpritePass(ctx, view) {
@@ -177,21 +186,24 @@ export class Renderer {
     const shouldRenderSprites = this.isLayerVisible('sprite');
     const shouldRenderEffects = this.isLayerVisible('effect');
     const carts = shouldRenderEffects ? this.world.carts : [];
-    if (shouldRenderSprites) {
-      this.diamondRenderer.renderSprites(ctx, view, spriteLayer, carts);
-    } else if (shouldRenderEffects && Array.isArray(carts) && carts.length > 0) {
-      this.diamondRenderer.renderSprites(ctx, view, null, carts);
-    }
+    const preparedAtlas = shouldRenderSprites && spriteLayer && Array.isArray(spriteLayer.placements)
+      ? this.voxelRenderer.prepareSpriteAtlas(spriteLayer.placements)
+      : null;
+    this.voxelRenderer.renderSprites(ctx, view, spriteLayer, carts, {
+      renderSprites: shouldRenderSprites,
+      renderEffects: shouldRenderEffects,
+      preparedAtlas
+    });
   }
 
   pickBuildingAt(px, py) {
     const worldPos = this.camera.screenToWorld(px, py);
-    return this.diamondRenderer.pickBuildingAt(worldPos.x, worldPos.y);
+    return this.voxelRenderer.pickBuildingAt(worldPos.x, worldPos.y);
   }
 
   pickProxyAt(px, py, filter) {
     const worldPos = this.camera.screenToWorld(px, py);
-    return this.diamondRenderer.pickProxyAt(worldPos.x, worldPos.y, filter);
+    return this.voxelRenderer.pickProxyAt(worldPos.x, worldPos.y, filter);
   }
 
   setLayerVisibility(layer, visible) {
@@ -223,7 +235,7 @@ export class Renderer {
     if (state && Object.prototype.hasOwnProperty.call(state, 'hoveredBuilding')) {
       const hover = state.hoveredBuilding;
       if (hover && hover.id) {
-        const proxy = this.diamondRenderer.hitProxies.get(hover.id);
+        const proxy = this.voxelRenderer.hitProxies.get(hover.id);
         if (proxy) {
           nextState.hoveredBuilding = {
             ...proxy,
@@ -244,7 +256,7 @@ export class Renderer {
     if (state && Object.prototype.hasOwnProperty.call(state, 'selection') && state.selection?.building?.id) {
       const selection = state.selection;
       const building = selection.building;
-      const proxy = this.diamondRenderer.hitProxies.get(building.id);
+      const proxy = this.voxelRenderer.hitProxies.get(building.id);
       if (proxy) {
         nextState.selection = {
           ...selection,
