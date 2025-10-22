@@ -1,47 +1,4 @@
-import { DiamondRenderer } from './renderer/diamondRenderer.js';
-
-function parseHexColor(hex) {
-  if (typeof hex !== 'string') {
-    return [128, 128, 128];
-  }
-  const value = hex.trim();
-  if (/^#([0-9a-f]{3})$/i.test(value)) {
-    const [, short] = value.match(/^#([0-9a-f]{3})$/i);
-    const r = parseInt(short[0] + short[0], 16);
-    const g = parseInt(short[1] + short[1], 16);
-    const b = parseInt(short[2] + short[2], 16);
-    return [r, g, b];
-  }
-  if (/^#([0-9a-f]{6})$/i.test(value)) {
-    const [, full] = value.match(/^#([0-9a-f]{6})$/i);
-    const r = parseInt(full.slice(0, 2), 16);
-    const g = parseInt(full.slice(2, 4), 16);
-    const b = parseInt(full.slice(4, 6), 16);
-    return [r, g, b];
-  }
-  return [128, 128, 128];
-}
-
-function toHexChannel(channel) {
-  const clamped = Math.max(0, Math.min(255, Math.round(channel)));
-  const str = clamped.toString(16);
-  return str.length === 1 ? `0${str}` : str;
-}
-
-function tintColor(hex, amount) {
-  const [r, g, b] = parseHexColor(hex);
-  const t = Math.max(-1, Math.min(1, amount));
-  const adjust = (component) => {
-    if (t >= 0) {
-      return component + (255 - component) * t;
-    }
-    return component * (1 + t);
-  };
-  const nr = adjust(r);
-  const ng = adjust(g);
-  const nb = adjust(b);
-  return `#${toHexChannel(nr)}${toHexChannel(ng)}${toHexChannel(nb)}`;
-}
+import { VoxelRenderer } from './renderer/voxelRenderer.js';
 
 export class Camera {
   constructor() {
@@ -104,7 +61,7 @@ export class Renderer {
     this.camera = new Camera();
     this._cameraFitted = false;
     this.colors = defaultPaletteColors(world?.palette);
-    this.diamondRenderer = new DiamondRenderer(world, this.camera, glyphs);
+    this.voxelRenderer = new VoxelRenderer(world, this.camera, glyphs);
     this.layerVisibility = {
       terrain: true,
       vector: true,
@@ -118,7 +75,6 @@ export class Renderer {
       measurement: null,
       editSession: null
     };
-    this._voxelDepthBuffer = new Map();
     this._zoomConstraints = { min: -4, max: 6 };
     this.resize(true);
     window.addEventListener('resize', () => this.resize());
@@ -132,7 +88,7 @@ export class Renderer {
     this.canvas.height = Math.floor(height * dpr);
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
-    this.diamondRenderer.setDevicePixelRatio(dpr);
+    this.voxelRenderer.setDevicePixelRatio(dpr);
     if (forceFit || !this._cameraFitted) {
       this.fitCameraToWorld();
     }
@@ -205,18 +161,23 @@ export class Renderer {
 
   drawTerrainPass(ctx, view) {
     if (!this.isLayerVisible('terrain')) return;
-    if (this.world?.voxels) {
-      this._drawVoxelTerrain(ctx, view);
-      return;
-    }
+    this.voxelRenderer.beginFrame(view);
     const nodes = this.world.getVisibleNodes(view, view.zoom) || [];
-    this.diamondRenderer.renderTerrain(ctx, nodes, view, this.colors);
+    const slices = [];
+    for (const node of nodes) {
+      const slice = this.voxelRenderer.getChunkSlice(node, this.colors);
+      if (slice) {
+        slices.push(slice);
+      }
+    }
+    this.voxelRenderer.drawTerrainSlices(ctx, slices, view);
+    this.voxelRenderer.endFrame();
   }
 
   drawVectorPass(ctx, view) {
     if (!this.isLayerVisible('vector')) return;
     const layer = this.world.getVectorLayer();
-    this.diamondRenderer.renderVectors(ctx, view, layer);
+    this.voxelRenderer.renderVectors(ctx, view, layer);
   }
 
   drawSpritePass(ctx, view) {
@@ -225,46 +186,24 @@ export class Renderer {
     const shouldRenderSprites = this.isLayerVisible('sprite');
     const shouldRenderEffects = this.isLayerVisible('effect');
     const carts = shouldRenderEffects ? this.world.carts : [];
-    if (shouldRenderSprites) {
-      this.diamondRenderer.renderSprites(ctx, view, spriteLayer, carts);
-    } else if (shouldRenderEffects && Array.isArray(carts) && carts.length > 0) {
-      this.diamondRenderer.renderSprites(ctx, view, null, carts);
-    }
+    const preparedAtlas = shouldRenderSprites && spriteLayer && Array.isArray(spriteLayer.placements)
+      ? this.voxelRenderer.prepareSpriteAtlas(spriteLayer.placements)
+      : null;
+    this.voxelRenderer.renderSprites(ctx, view, spriteLayer, carts, {
+      renderSprites: shouldRenderSprites,
+      renderEffects: shouldRenderEffects,
+      preparedAtlas
+    });
   }
 
   pickBuildingAt(px, py) {
     const worldPos = this.camera.screenToWorld(px, py);
-    return this.diamondRenderer.pickBuildingAt(worldPos.x, worldPos.y);
+    return this.voxelRenderer.pickBuildingAt(worldPos.x, worldPos.y);
   }
 
   pickProxyAt(px, py, filter) {
     const worldPos = this.camera.screenToWorld(px, py);
-    return this.diamondRenderer.pickProxyAt(worldPos.x, worldPos.y, filter);
-  }
-
-  pickVoxelAt(px, py, options = {}) {
-    if (!this.world?.voxels) {
-      return null;
-    }
-    const worldPos = this.camera.screenToWorld(px, py);
-    const x = Math.floor(worldPos.x);
-    const y = Math.floor(worldPos.y);
-    const key = `${x},${y}`;
-    const depthEntry = this._voxelDepthBuffer.get(key);
-    const column = this.world.getVoxelColumnAt(worldPos.x, worldPos.y);
-    if (!column) {
-      return null;
-    }
-    const height = depthEntry?.height ?? column.height ?? 0;
-    const layer = options.layer || 'terrain';
-    return {
-      x,
-      y,
-      z: height,
-      layer,
-      column,
-      world: worldPos
-    };
+    return this.voxelRenderer.pickProxyAt(worldPos.x, worldPos.y, filter);
   }
 
   setLayerVisibility(layer, visible) {
@@ -296,7 +235,7 @@ export class Renderer {
     if (state && Object.prototype.hasOwnProperty.call(state, 'hoveredBuilding')) {
       const hover = state.hoveredBuilding;
       if (hover && hover.id) {
-        const proxy = this.diamondRenderer.hitProxies.get(hover.id);
+        const proxy = this.voxelRenderer.hitProxies.get(hover.id);
         if (proxy) {
           nextState.hoveredBuilding = {
             ...proxy,
@@ -317,7 +256,7 @@ export class Renderer {
     if (state && Object.prototype.hasOwnProperty.call(state, 'selection') && state.selection?.building?.id) {
       const selection = state.selection;
       const building = selection.building;
-      const proxy = this.diamondRenderer.hitProxies.get(building.id);
+      const proxy = this.voxelRenderer.hitProxies.get(building.id);
       if (proxy) {
         nextState.selection = {
           ...selection,
@@ -349,26 +288,6 @@ export class Renderer {
     ctx.lineWidth = 1 / this.camera.scale;
     ctx.strokeStyle = 'rgba(255, 220, 80, 0.9)';
     ctx.fillStyle = 'rgba(255, 220, 80, 0.2)';
-
-    if (state.voxelBrush?.center && state.voxelBrush?.brush?.radius) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(82, 141, 255, 0.75)';
-      ctx.lineWidth = 2 / this.camera.scale;
-      ctx.setLineDash(state.voxelBrush.stroke ? [1 / this.camera.scale, 4 / this.camera.scale] : []);
-      ctx.beginPath();
-      ctx.arc(state.voxelBrush.center.x, state.voxelBrush.center.y, state.voxelBrush.brush.radius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    if (state.voxelHover) {
-      const size = 1;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255, 226, 138, 0.9)';
-      ctx.lineWidth = 1 / this.camera.scale;
-      ctx.strokeRect(state.voxelHover.x, state.voxelHover.y, size, size);
-      ctx.restore();
-    }
 
     if (state.hoveredNode?.bounds) {
       const { minX, minY, maxX, maxY } = state.hoveredNode.bounds;
@@ -460,42 +379,6 @@ export class Renderer {
     }
 
     ctx.restore();
-  }
-
-  _drawVoxelTerrain(ctx, view) {
-    const bounds = {
-      minX: Math.floor(view.left) - 1,
-      maxX: Math.ceil(view.right) + 1,
-      minY: Math.floor(view.top) - 1,
-      maxY: Math.ceil(view.bottom) + 1
-    };
-    this._voxelDepthBuffer.clear();
-    const palette = this.world?.palette;
-    const materialColor = (material) => {
-      if (!material) {
-        return '#808080';
-      }
-      if (palette?.materials?.[material]?.color) {
-        return palette.materials[material].color;
-      }
-      if (palette?.colors?.[material]) {
-        return palette.colors[material];
-      }
-      return material;
-    };
-    this.world.forEachVoxelColumn(bounds, (column) => {
-      if (!column) return;
-      const baseColor = materialColor(column.material);
-      const shade = column.height / (this.world.voxels?.maxHeight || 1);
-      const color = tintColor(baseColor, shade * 0.35 - 0.15);
-      ctx.fillStyle = color;
-      ctx.fillRect(column.x, column.y, 1, 1);
-      this._voxelDepthBuffer.set(`${column.x},${column.y}`, { height: column.height });
-      if (column.prop && column.prop.id) {
-        ctx.fillStyle = tintColor(baseColor, 0.5);
-        ctx.fillRect(column.x + 0.2, column.y + 0.2, 0.6, 0.6);
-      }
-    });
   }
 
   _computeMaxZoomNormalized() {

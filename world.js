@@ -1,6 +1,5 @@
-import { QuadtreeWorld } from './world/quadtreeWorld.js';
-import { WorldEditor } from './world/editor.js';
 import { VoxelWorld } from './world/voxelWorld.js';
+import { WorldEditor } from './world/editor.js';
 
 const DEFAULT_ZOOM_MIN = Number.NEGATIVE_INFINITY;
 const DEFAULT_ZOOM_MAX = null;
@@ -191,9 +190,10 @@ export class World {
     this._rng = createMulberry32(this.seed);
     this.autoSeed = autoSeed !== false;
 
-    this.terrain = new QuadtreeWorld({
+    this.terrain = new VoxelWorld({
       bounds: this.bounds,
-      maxLod,
+      chunkSize: 32,
+      chunkHeight: 32,
       zoomThresholds
     });
     this.editor = new WorldEditor();
@@ -204,7 +204,7 @@ export class World {
       terrain: {
         zoomMin: DEFAULT_ZOOM_MIN,
         zoomMax: DEFAULT_ZOOM_MAX,
-        quadtree: this.terrain
+        voxelWorld: this.terrain
       },
       vector: {
         zoomMin: DEFAULT_ZOOM_MIN,
@@ -232,24 +232,14 @@ export class World {
     }
   }
 
-  _seedTerrain(targetLod = 3) {
+  _seedTerrain() {
     const availableTiles = this.palette?.tiles?.map(tile => tile.id) || [];
-    const root = this.terrain.getNode(this.terrain.rootId);
-    if (!root) return;
-    const queue = [root];
-    while (queue.length > 0) {
-      const node = queue.shift();
-      if (node.lod < targetLod) {
-        const children = this.terrain.subdivideNode(node.id) || [];
-        if (children.length) {
-          queue.push(...children);
-        }
-        if (!children.length) {
-          this._assignTileId(node.id, this._randomTileId(availableTiles));
-        }
-        continue;
+    for (let cx = 0; cx < this.terrain.chunkCountX; cx++) {
+      for (let cy = 0; cy < this.terrain.chunkCountY; cy++) {
+        const chunk = this.terrain.getChunk(cx, cy);
+        if (!chunk) continue;
+        this._assignTileId(chunk.id, this._randomTileId(availableTiles));
       }
-      this._assignTileId(node.id, this._randomTileId(availableTiles));
     }
   }
 
@@ -278,8 +268,8 @@ export class World {
     this._rng = createMulberry32(this.seed);
     const maxLod = this.terrain.maxLod;
     const zoomThresholds = this.terrain.zoomThresholds;
-    this.terrain = new QuadtreeWorld({ bounds: this.bounds, maxLod, zoomThresholds });
-    this.layers.terrain.quadtree = this.terrain;
+    this.terrain = new VoxelWorld({ bounds: this.bounds, chunkSize: 32, chunkHeight: 32, zoomThresholds });
+    this.layers.terrain.voxelWorld = this.terrain;
     if (this.editor) {
       this.editor.clearAll();
     }
@@ -338,9 +328,9 @@ export class World {
 
   assignTileToAll(tileId) {
     if (!this.palette?.byId?.[tileId]) return;
-    for (const record of this.terrain.streamNodes()) {
-      if (record.type !== 'node') continue;
-      this.terrain.setNodePayload(record.id, { terrain: tileId });
+    for (const node of this.terrain.nodes.values()) {
+      if (!node || node.id === this.terrain.rootId) continue;
+      this.terrain.setNodePayload(node.id, { terrain: tileId });
     }
   }
 
@@ -749,7 +739,7 @@ export class World {
       spritePlacements: this.layers.sprite.placements.map(clonePlacement).filter(Boolean),
       effectAgents: this.layers.effect.agents.map(agent => ({ ...agent }))
     });
-    for (const record of this.terrain.streamNodes()) {
+    for (const record of this.terrain.streamChunks()) {
       records.push(record);
     }
     return records.map(record => JSON.stringify(record)).join('\n');
@@ -776,12 +766,13 @@ export class World {
       ? worldRecord.zoomThresholds
       : this.terrain.zoomThresholds;
     const previousMaxLod = this.terrain?.maxLod ?? 5;
-    this.terrain = new QuadtreeWorld({
+    this.terrain = new VoxelWorld({
       bounds: this.bounds,
-      maxLod: previousMaxLod,
+      chunkSize: 32,
+      chunkHeight: 32,
       zoomThresholds
     });
-    this.layers.terrain.quadtree = this.terrain;
+    this.layers.terrain.voxelWorld = this.terrain;
     this.terrain.loadFromStream(nodeRecords);
     if (this.editor) {
       this.editor.clearAll();

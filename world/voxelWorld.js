@@ -1,357 +1,487 @@
-const DEFAULT_CHUNK_SIZE = 16;
-const DEFAULT_MAX_HEIGHT = 64;
+const DEFAULT_CHUNK_SIZE = 32;
+const DEFAULT_CHUNK_HEIGHT = 32;
+const DEFAULT_ZOOM_THRESHOLDS = [-Infinity];
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function chunkKey(cx, cy) {
-  return `${cx},${cy}`;
+function normaliseBounds(bounds) {
+  if (!bounds) {
+    return { minX: 0, minY: 0, maxX: DEFAULT_CHUNK_SIZE, maxY: DEFAULT_CHUNK_SIZE };
+  }
+  const { minX, minY, maxX, maxY } = bounds;
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+    throw new Error('Bounds must contain finite numbers.');
+  }
+  if (maxX <= minX || maxY <= minY) {
+    throw new Error('Bounds must have positive area.');
+  }
+  return { minX, minY, maxX, maxY };
 }
 
-function normaliseMaterial(material, palette) {
-  if (!material) {
+function encodeColumn(column) {
+  if (!column) {
     return null;
   }
-  const key = String(material);
-  if (!palette) {
-    return key;
+  const result = {};
+  if (column.top) {
+    result.top = { tileId: column.top.tileId, z: column.top.z };
   }
-  if (palette.materials && palette.materials[key]) {
-    return key;
+  if (column.spriteKey) {
+    result.spriteKey = column.spriteKey;
   }
-  if (palette.colors && palette.colors[key]) {
-    return key;
+  if (column.variant != null) {
+    result.variant = column.variant;
   }
-  return key;
+  if (column.metadata && Object.keys(column.metadata).length > 0) {
+    result.metadata = { ...column.metadata };
+  }
+  return result;
 }
 
-function defaultPaletteMaterial(palette) {
-  if (!palette) return 'grass';
-  if (palette.materials) {
-    const keys = Object.keys(palette.materials);
-    if (keys.length > 0) {
-      return keys[0];
-    }
+function decodeColumn(data) {
+  if (!data || typeof data !== 'object') {
+    return { top: null, spriteKey: null, variant: null, metadata: null };
   }
-  if (palette.colors) {
-    const keys = Object.keys(palette.colors);
-    if (keys.length > 0) {
-      return keys[0];
-    }
-  }
-  return 'grass';
+  const column = {
+    top: data.top ? { tileId: data.top.tileId ?? null, z: data.top.z ?? 0 } : null,
+    spriteKey: data.spriteKey ?? null,
+    variant: data.variant ?? null,
+    metadata: data.metadata && typeof data.metadata === 'object' ? { ...data.metadata } : null
+  };
+  return column;
 }
 
-function cloneOperation(op) {
-  return op ? { ...op } : null;
+function createEmptyColumn() {
+  return { top: null, spriteKey: null, variant: null, metadata: null };
+}
+
+function cloneColumn(column) {
+  if (!column) {
+    return createEmptyColumn();
+  }
+  return {
+    top: column.top ? { tileId: column.top.tileId, z: column.top.z } : null,
+    spriteKey: column.spriteKey ?? null,
+    variant: column.variant ?? null,
+    metadata: column.metadata ? { ...column.metadata } : null
+  };
+}
+
+function clonePayloadRefs(payloadRefs) {
+  return {
+    terrain: payloadRefs?.terrain ?? null,
+    terrainPatches: Array.isArray(payloadRefs?.terrainPatches) ? payloadRefs.terrainPatches.map((patch) => ({ ...patch })) : [],
+    vector: Array.isArray(payloadRefs?.vector) ? payloadRefs.vector.map((feature) => ({ ...feature })) : [],
+    parcels: Array.isArray(payloadRefs?.parcels) ? payloadRefs.parcels.map((feature) => ({ ...feature })) : [],
+    buildings: Array.isArray(payloadRefs?.buildings) ? payloadRefs.buildings.map((feature) => ({ ...feature })) : [],
+    sprites: Array.isArray(payloadRefs?.sprites) ? payloadRefs.sprites.map((feature) => ({ ...feature })) : [],
+    effects: Array.isArray(payloadRefs?.effects) ? payloadRefs.effects.map((feature) => ({ ...feature })) : []
+  };
+}
+
+function encodeVoxels(typedArray) {
+  if (!(typedArray instanceof Uint32Array)) {
+    return '';
+  }
+  if (typeof Buffer === 'function') {
+    return Buffer.from(typedArray.buffer).toString('base64');
+  }
+  const bytes = new Uint8Array(typedArray.buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const slice = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode.apply(null, slice);
+  }
+  if (typeof btoa === 'function') {
+    return btoa(binary);
+  }
+  return binary;
+}
+
+function decodeVoxels(base64, length) {
+  if (typeof base64 !== 'string' || base64.length === 0) {
+    return new Uint32Array(length);
+  }
+  if (typeof Buffer === 'function') {
+    const buffer = Buffer.from(base64, 'base64');
+    const array = new Uint32Array(length);
+    array.set(new Uint32Array(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, length * 4) / 4));
+    return array;
+  }
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    const buffer = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      buffer[i] = binary.charCodeAt(i);
+    }
+    const array = new Uint32Array(length);
+    array.set(new Uint32Array(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, length * 4) / 4));
+    return array;
+  }
+  return new Uint32Array(length);
 }
 
 export class VoxelWorld {
-  constructor({ chunkSize = DEFAULT_CHUNK_SIZE, maxHeight = DEFAULT_MAX_HEIGHT, palette = null } = {}) {
+  constructor({ bounds, chunkSize = DEFAULT_CHUNK_SIZE, chunkHeight = DEFAULT_CHUNK_HEIGHT, zoomThresholds = DEFAULT_ZOOM_THRESHOLDS } = {}) {
+    this.bounds = normaliseBounds(bounds);
     this.chunkSize = Math.max(1, Math.floor(chunkSize));
-    this.maxHeight = Math.max(1, Math.floor(maxHeight));
-    this.palette = palette;
-    this.defaultMaterial = defaultPaletteMaterial(palette);
-    this.chunks = new Map();
-    this.props = new Map();
-    this._history = { undo: [], redo: [] };
-    this._activeStroke = null;
+    this.chunkHeight = Math.max(1, Math.floor(chunkHeight));
+    this.zoomThresholds = Array.isArray(zoomThresholds) && zoomThresholds.length > 0
+      ? zoomThresholds.map((value) => Number.isFinite(value) ? value : -Infinity)
+      : DEFAULT_ZOOM_THRESHOLDS;
+    this.chunkCountX = Math.ceil((this.bounds.maxX - this.bounds.minX) / this.chunkSize);
+    this.chunkCountY = Math.ceil((this.bounds.maxY - this.bounds.minY) / this.chunkSize);
+    this.nodes = new Map();
+    this.rootId = 'root';
+    this.maxLod = 0;
+    this._createRoot();
   }
 
-  getChunkCoords(x, y) {
-    const cx = Math.floor(x / this.chunkSize);
-    const cy = Math.floor(y / this.chunkSize);
-    return { cx, cy };
+  _createRoot() {
+    const node = {
+      id: this.rootId,
+      parentId: null,
+      lod: 0,
+      bounds: { ...this.bounds },
+      children: [],
+      metadata: {
+        levelLabel: 'world',
+        name: 'World Root',
+        parentPath: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        tags: []
+      },
+      payloadRefs: {
+        terrain: null,
+        terrainPatches: [],
+        vector: [],
+        parcels: [],
+        buildings: [],
+        sprites: [],
+        effects: []
+      },
+      minZoom: this.zoomThresholds[0] ?? -Infinity,
+      maxZoom: null
+    };
+    this.nodes.set(node.id, node);
   }
 
-  _ensureChunk(cx, cy) {
-    const key = chunkKey(cx, cy);
-    let chunk = this.chunks.get(key);
-    if (!chunk) {
-      const size = this.chunkSize;
-      chunk = {
-        cx,
-        cy,
-        width: size,
-        height: size,
-        materials: new Array(size * size).fill(this.defaultMaterial),
-        heights: new Array(size * size).fill(0)
-      };
-      this.chunks.set(key, chunk);
+  _chunkKey(cx, cy) {
+    return `chunk:${cx},${cy}`;
+  }
+
+  _voxelIndex(localX, localY, localZ) {
+    return localZ * this.chunkSize * this.chunkSize + localY * this.chunkSize + localX;
+  }
+
+  _columnIndex(localX, localY) {
+    return localY * this.chunkSize + localX;
+  }
+
+  _worldToChunk(x, y) {
+    const clampedX = clamp(x, this.bounds.minX, this.bounds.maxX - 1e-9);
+    const clampedY = clamp(y, this.bounds.minY, this.bounds.maxY - 1e-9);
+    const relX = clampedX - this.bounds.minX;
+    const relY = clampedY - this.bounds.minY;
+    const chunkX = clamp(Math.floor(relX / this.chunkSize), 0, this.chunkCountX - 1);
+    const chunkY = clamp(Math.floor(relY / this.chunkSize), 0, this.chunkCountY - 1);
+    const localX = clamp(Math.floor(relX - chunkX * this.chunkSize), 0, this.chunkSize - 1);
+    const localY = clamp(Math.floor(relY - chunkY * this.chunkSize), 0, this.chunkSize - 1);
+    return { chunkX, chunkY, localX, localY };
+  }
+
+  _createChunk(cx, cy) {
+    const key = this._chunkKey(cx, cy);
+    if (this.nodes.has(key)) {
+      return this.nodes.get(key);
+    }
+    const minX = this.bounds.minX + cx * this.chunkSize;
+    const minY = this.bounds.minY + cy * this.chunkSize;
+    const maxX = Math.min(minX + this.chunkSize, this.bounds.maxX);
+    const maxY = Math.min(minY + this.chunkSize, this.bounds.maxY);
+    const chunk = {
+      id: key,
+      parentId: this.rootId,
+      lod: 0,
+      chunkX: cx,
+      chunkY: cy,
+      bounds: { minX, minY, maxX, maxY },
+      children: [],
+      metadata: {
+        levelLabel: 'chunk',
+        name: `Chunk ${cx},${cy}`,
+        parentPath: ['world:root'],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        tags: []
+      },
+      payloadRefs: {
+        terrain: null,
+        terrainPatches: [],
+        vector: [],
+        parcels: [],
+        buildings: [],
+        sprites: [],
+        effects: []
+      },
+      minZoom: this.zoomThresholds[0] ?? -Infinity,
+      maxZoom: null,
+      voxels: new Uint32Array(this.chunkSize * this.chunkSize * this.chunkHeight),
+      columns: Array.from({ length: this.chunkSize * this.chunkSize }, () => createEmptyColumn())
+    };
+    this.nodes.set(key, chunk);
+    const root = this.nodes.get(this.rootId);
+    if (root) {
+      if (!root.children.includes(key)) {
+        root.children.push(key);
+        root.metadata.updatedAt = Date.now();
+      }
     }
     return chunk;
   }
 
-  _indexInChunk(chunk, x, y) {
-    const localX = x - chunk.cx * this.chunkSize;
-    const localY = y - chunk.cy * this.chunkSize;
-    if (localX < 0 || localY < 0 || localX >= this.chunkSize || localY >= this.chunkSize) {
-      return -1;
+  getChunk(cx, cy) {
+    if (!Number.isInteger(cx) || !Number.isInteger(cy)) {
+      return null;
     }
-    return localY * this.chunkSize + localX;
+    if (cx < 0 || cy < 0 || cx >= this.chunkCountX || cy >= this.chunkCountY) {
+      return null;
+    }
+    return this._createChunk(cx, cy);
   }
 
-  getMaterial(x, y) {
-    const { cx, cy } = this.getChunkCoords(x, y);
-    const key = chunkKey(cx, cy);
-    const chunk = this.chunks.get(key);
+  getChunkById(id) {
+    if (!id || typeof id !== 'string') {
+      return null;
+    }
+    return this.nodes.get(id) || null;
+  }
+
+  getNode(id) {
+    return this.nodes.get(id) || null;
+  }
+
+  ensureNodeForTile(lod, tileX, tileY) {
+    const cx = clamp(Number.isFinite(tileX) ? Math.floor(tileX) : 0, 0, this.chunkCountX - 1);
+    const cy = clamp(Number.isFinite(tileY) ? Math.floor(tileY) : 0, 0, this.chunkCountY - 1);
+    return this.getChunk(cx, cy);
+  }
+
+  setNodePayload(nodeId, payloadRefs = {}) {
+    const chunk = typeof nodeId === 'string' ? this.getChunkById(nodeId) : nodeId;
     if (!chunk) {
-      return this.defaultMaterial;
+      return null;
     }
-    const index = this._indexInChunk(chunk, x, y);
-    if (index < 0) {
-      return this.defaultMaterial;
-    }
-    return chunk.materials[index];
-  }
-
-  getHeight(x, y) {
-    const { cx, cy } = this.getChunkCoords(x, y);
-    const key = chunkKey(cx, cy);
-    const chunk = this.chunks.get(key);
-    if (!chunk) {
-      return 0;
-    }
-    const index = this._indexInChunk(chunk, x, y);
-    if (index < 0) {
-      return 0;
-    }
-    return chunk.heights[index] || 0;
-  }
-
-  getProp(x, y) {
-    const key = `${x},${y}`;
-    return this.props.get(key) || null;
-  }
-
-  getColumn(x, y) {
-    return {
-      x,
-      y,
-      material: this.getMaterial(x, y),
-      height: this.getHeight(x, y),
-      prop: this.getProp(x, y)
+    const existing = chunk.payloadRefs;
+    chunk.payloadRefs = {
+      terrain: payloadRefs.terrain ?? existing.terrain ?? null,
+      terrainPatches: Array.isArray(payloadRefs.terrainPatches)
+        ? payloadRefs.terrainPatches.map((patch) => ({ ...patch }))
+        : existing.terrainPatches.map((patch) => ({ ...patch })),
+      vector: Array.isArray(payloadRefs.vector)
+        ? payloadRefs.vector.map((feature) => ({ ...feature }))
+        : existing.vector.map((feature) => ({ ...feature })),
+      parcels: Array.isArray(payloadRefs.parcels)
+        ? payloadRefs.parcels.map((feature) => ({ ...feature }))
+        : existing.parcels.map((feature) => ({ ...feature })),
+      buildings: Array.isArray(payloadRefs.buildings)
+        ? payloadRefs.buildings.map((feature) => ({ ...feature }))
+        : existing.buildings.map((feature) => ({ ...feature })),
+      sprites: Array.isArray(payloadRefs.sprites)
+        ? payloadRefs.sprites.map((feature) => ({ ...feature }))
+        : existing.sprites.map((feature) => ({ ...feature })),
+      effects: Array.isArray(payloadRefs.effects)
+        ? payloadRefs.effects.map((feature) => ({ ...feature }))
+        : existing.effects.map((feature) => ({ ...feature }))
     };
+    chunk.metadata.updatedAt = Date.now();
+    return chunk;
   }
 
-  setMaterial(x, y, material, record = true) {
-    const resolved = material ? normaliseMaterial(material, this.palette) : null;
-    const { cx, cy } = this.getChunkCoords(x, y);
-    const chunk = this._ensureChunk(cx, cy);
-    const index = this._indexInChunk(chunk, x, y);
-    if (index < 0) return null;
-    const previous = chunk.materials[index];
-    if (previous === resolved) {
+  setMetadata(nodeId, metadata) {
+    const chunk = typeof nodeId === 'string' ? this.getChunkById(nodeId) : nodeId;
+    if (!chunk) {
       return null;
     }
-    chunk.materials[index] = resolved ?? this.defaultMaterial;
-    if (record && this._activeStroke) {
-      this._activeStroke.ops.push({ type: 'material', x, y, from: previous, to: chunk.materials[index] });
+    if (!metadata || typeof metadata !== 'object') {
+      return chunk.metadata;
     }
-    return previous;
+    chunk.metadata = {
+      ...chunk.metadata,
+      ...metadata,
+      parentPath: Array.isArray(metadata.parentPath) ? [...metadata.parentPath] : [...(chunk.metadata.parentPath || [])],
+      tags: Array.isArray(metadata.tags) ? [...metadata.tags] : [...(chunk.metadata.tags || [])],
+      updatedAt: Date.now()
+    };
+    return chunk.metadata;
   }
 
-  setHeight(x, y, height, record = true) {
-    const { cx, cy } = this.getChunkCoords(x, y);
-    const chunk = this._ensureChunk(cx, cy);
-    const index = this._indexInChunk(chunk, x, y);
-    if (index < 0) return null;
-    const clamped = clamp(Math.floor(height), 0, this.maxHeight);
-    const previous = chunk.heights[index] || 0;
-    if (previous === clamped) {
+  setVoxel(worldX, worldY, worldZ, tileId, { spriteKey = null, variant = null, metadata = null } = {}) {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
       return null;
     }
-    chunk.heights[index] = clamped;
-    if (record && this._activeStroke) {
-      this._activeStroke.ops.push({ type: 'height', x, y, from: previous, to: clamped });
+    const { chunkX, chunkY, localX, localY } = this._worldToChunk(worldX, worldY);
+    const chunk = this.getChunk(chunkX, chunkY);
+    if (!chunk) {
+      return null;
     }
-    return previous;
+    const z = clamp(Number.isFinite(worldZ) ? Math.floor(worldZ) : 0, 0, this.chunkHeight - 1);
+    const index = this._voxelIndex(localX, localY, z);
+    chunk.voxels[index] = tileId >>> 0;
+    const columnIndex = this._columnIndex(localX, localY);
+    const column = chunk.columns[columnIndex] ?? createEmptyColumn();
+    column.top = { tileId: tileId >>> 0, z };
+    if (spriteKey != null) {
+      column.spriteKey = spriteKey;
+    }
+    if (variant != null) {
+      column.variant = variant;
+    }
+    if (metadata && typeof metadata === 'object') {
+      column.metadata = { ...metadata };
+    }
+    chunk.columns[columnIndex] = column;
+    if (chunk.payloadRefs.terrain == null) {
+      chunk.payloadRefs.terrain = tileId >>> 0;
+    }
+    chunk.metadata.updatedAt = Date.now();
+    return chunk;
   }
 
-  modifyHeight(x, y, delta, record = true) {
-    const current = this.getHeight(x, y);
-    return this.setHeight(x, y, current + delta, record);
+  _collectVisibleChunkIndices(viewBounds) {
+    if (!viewBounds) {
+      return { minCx: 0, maxCx: this.chunkCountX - 1, minCy: 0, maxCy: this.chunkCountY - 1 };
+    }
+    const left = viewBounds.left ?? viewBounds.minX ?? this.bounds.minX;
+    const top = viewBounds.top ?? viewBounds.minY ?? this.bounds.minY;
+    const right = viewBounds.right ?? (viewBounds.maxX ?? this.bounds.maxX);
+    const bottom = viewBounds.bottom ?? (viewBounds.maxY ?? this.bounds.maxY);
+    const minCx = clamp(Math.floor((left - this.bounds.minX) / this.chunkSize), 0, this.chunkCountX - 1);
+    const maxCx = clamp(Math.floor((right - this.bounds.minX) / this.chunkSize), 0, this.chunkCountX - 1);
+    const minCy = clamp(Math.floor((top - this.bounds.minY) / this.chunkSize), 0, this.chunkCountY - 1);
+    const maxCy = clamp(Math.floor((bottom - this.bounds.minY) / this.chunkSize), 0, this.chunkCountY - 1);
+    return { minCx, maxCx, minCy, maxCy };
   }
 
-  setProp(x, y, propId, record = true) {
-    const key = `${x},${y}`;
-    const previous = this.props.get(key) || null;
-    if (propId) {
-      this.props.set(key, { id: propId });
-    } else {
-      this.props.delete(key);
-    }
-    if (record && this._activeStroke) {
-      this._activeStroke.ops.push({ type: 'prop', x, y, from: previous, to: propId ? { id: propId } : null });
-    }
-    return previous;
-  }
-
-  beginStroke(metadata = null) {
-    if (this._activeStroke) {
-      return this._activeStroke;
-    }
-    this._activeStroke = { ops: [], metadata };
-    return this._activeStroke;
-  }
-
-  commitStroke() {
-    const stroke = this._activeStroke;
-    if (!stroke) {
-      return false;
-    }
-    this._activeStroke = null;
-    if (!stroke.ops.length) {
-      return false;
-    }
-    this._history.undo.push(stroke.ops.map(cloneOperation));
-    this._history.redo = [];
-    return true;
-  }
-
-  cancelStroke() {
-    const stroke = this._activeStroke;
-    if (!stroke) {
+  iterateVisibleChunks(viewBounds, callback) {
+    const { minCx, maxCx, minCy, maxCy } = this._collectVisibleChunkIndices(viewBounds);
+    if (typeof callback === 'function') {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        for (let cy = minCy; cy <= maxCy; cy++) {
+          const chunk = this.getChunk(cx, cy);
+          if (chunk) {
+            callback(chunk);
+          }
+        }
+      }
       return;
     }
-    for (let i = stroke.ops.length - 1; i >= 0; i--) {
-      const op = stroke.ops[i];
-      this._applyOperation(op, true);
-    }
-    this._activeStroke = null;
-  }
-
-  _applyOperation(op, inverse = false) {
-    if (!op) return;
-    const from = inverse ? op.to : op.from;
-    const to = inverse ? op.from : op.to;
-    if (op.type === 'material') {
-      this.setMaterial(op.x, op.y, to, false);
-    } else if (op.type === 'height') {
-      this.setHeight(op.x, op.y, to, false);
-    } else if (op.type === 'prop') {
-      this.setProp(op.x, op.y, to ? to.id : null, false);
-    }
-  }
-
-  undo() {
-    if (!this._history.undo.length) {
-      return false;
-    }
-    const ops = this._history.undo.pop();
-    if (!ops) return false;
-    for (let i = ops.length - 1; i >= 0; i--) {
-      this._applyOperation(ops[i], true);
-    }
-    this._history.redo.push(ops.map(cloneOperation));
-    return true;
-  }
-
-  redo() {
-    if (!this._history.redo.length) {
-      return false;
-    }
-    const ops = this._history.redo.pop();
-    if (!ops) return false;
-    for (const op of ops) {
-      this._applyOperation(op, false);
-    }
-    this._history.undo.push(ops.map(cloneOperation));
-    return true;
-  }
-
-  clearHistory() {
-    this._history.undo = [];
-    this._history.redo = [];
-  }
-
-  canUndo() {
-    return this._history.undo.length > 0;
-  }
-
-  canRedo() {
-    return this._history.redo.length > 0;
-  }
-
-  forEachColumnInBounds(bounds, callback) {
-    if (!callback) return;
-    const minX = Math.floor(bounds.minX);
-    const maxX = Math.ceil(bounds.maxX);
-    const minY = Math.floor(bounds.minY);
-    const maxY = Math.ceil(bounds.maxY);
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        callback(this.getColumn(x, y));
-      }
-    }
-  }
-
-  pickColumn(worldX, worldY) {
-    const x = Math.floor(worldX);
-    const y = Math.floor(worldY);
-    return this.getColumn(x, y);
-  }
-
-  applyPaintBrush(centerX, centerY, radius, material) {
-    const stroke = this.beginStroke({ type: 'paint' });
-    const r = Math.max(0, radius);
-    const minX = Math.floor(centerX - r);
-    const maxX = Math.floor(centerX + r);
-    const minY = Math.floor(centerY - r);
-    const maxY = Math.floor(centerY + r);
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const dx = x + 0.5 - centerX;
-        const dy = y + 0.5 - centerY;
-        if (dx * dx + dy * dy > r * r) continue;
-        this.setMaterial(x, y, material, true);
-      }
-    }
-    return stroke;
-  }
-
-  applyEraseBrush(centerX, centerY, radius) {
-    return this.applyPaintBrush(centerX, centerY, radius, this.defaultMaterial);
-  }
-
-  applyHeightBrush(centerX, centerY, radius, delta) {
-    const stroke = this.beginStroke({ type: 'height', delta });
-    const r = Math.max(0, radius);
-    const minX = Math.floor(centerX - r);
-    const maxX = Math.floor(centerX + r);
-    const minY = Math.floor(centerY - r);
-    const maxY = Math.floor(centerY + r);
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const dx = x + 0.5 - centerX;
-        const dy = y + 0.5 - centerY;
-        if (dx * dx + dy * dy > r * r) continue;
-        this.modifyHeight(x, y, delta, true);
-      }
-    }
-    return stroke;
-  }
-
-  applyPropBrush(centerX, centerY, radius, propId) {
-    const stroke = this.beginStroke({ type: 'prop', id: propId });
-    const r = Math.max(0, radius);
-    const minX = Math.floor(centerX - r);
-    const maxX = Math.floor(centerX + r);
-    const minY = Math.floor(centerY - r);
-    const maxY = Math.floor(centerY + r);
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const dx = x + 0.5 - centerX;
-        const dy = y + 0.5 - centerY;
-        if (dx * dx + dy * dy > r * r) continue;
-        if (propId) {
-          this.setProp(x, y, propId, true);
-        } else {
-          this.setProp(x, y, null, true);
+    const result = [];
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        const chunk = this.getChunk(cx, cy);
+        if (chunk) {
+          result.push(chunk);
         }
       }
     }
-    return stroke;
+    return result;
+  }
+
+  getVisibleNodes(viewBounds) {
+    return this.iterateVisibleChunks(viewBounds) || [];
+  }
+
+  sampleFeatureAt(point) {
+    if (!point) {
+      return null;
+    }
+    const { chunkX, chunkY } = this._worldToChunk(point.x, point.y);
+    return this.getChunk(chunkX, chunkY);
+  }
+
+  subdivideNode(nodeId) {
+    if (nodeId !== this.rootId) {
+      return [];
+    }
+    const children = [];
+    for (let cx = 0; cx < this.chunkCountX; cx++) {
+      for (let cy = 0; cy < this.chunkCountY; cy++) {
+        const chunk = this.getChunk(cx, cy);
+        if (chunk) {
+          children.push(chunk);
+        }
+      }
+    }
+    return children;
+  }
+
+  pruneSubtree() {
+    // No-op for voxel world; chunks persist once created.
+  }
+
+  streamChunks() {
+    const records = [];
+    for (const node of this.nodes.values()) {
+      if (node.id === this.rootId) {
+        records.push({
+          type: 'root',
+          id: node.id,
+          bounds: { ...node.bounds },
+          metadata: { ...node.metadata },
+          zoomThresholds: [...this.zoomThresholds]
+        });
+        continue;
+      }
+      records.push({
+        type: 'chunk',
+        id: node.id,
+        chunkX: node.chunkX,
+        chunkY: node.chunkY,
+        bounds: { ...node.bounds },
+        metadata: { ...node.metadata },
+        payloadRefs: clonePayloadRefs(node.payloadRefs),
+        voxels: encodeVoxels(node.voxels),
+        columns: node.columns.map(encodeColumn)
+      });
+    }
+    return records;
+  }
+
+  loadFromStream(records) {
+    this.nodes = new Map();
+    this._createRoot();
+    if (!Array.isArray(records)) {
+      return;
+    }
+    for (const record of records) {
+      if (!record || typeof record !== 'object') {
+        continue;
+      }
+      if (record.type === 'root') {
+        const root = this.nodes.get(this.rootId);
+        if (root) {
+          root.metadata = record.metadata ? { ...record.metadata } : root.metadata;
+          root.bounds = record.bounds ? { ...record.bounds } : root.bounds;
+        }
+        continue;
+      }
+      if (record.type !== 'chunk') {
+        continue;
+      }
+      const { chunkX = 0, chunkY = 0 } = record;
+      const chunk = this._createChunk(chunkX, chunkY);
+      chunk.metadata = record.metadata ? { ...record.metadata } : chunk.metadata;
+      chunk.payloadRefs = clonePayloadRefs(record.payloadRefs);
+      const total = this.chunkSize * this.chunkSize * this.chunkHeight;
+      chunk.voxels = decodeVoxels(record.voxels, total);
+      chunk.columns = Array.isArray(record.columns)
+        ? record.columns.map((column) => decodeColumn(column))
+        : chunk.columns.map(() => createEmptyColumn());
+    }
   }
 }

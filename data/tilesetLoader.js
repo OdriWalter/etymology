@@ -71,7 +71,7 @@ export class TilesetLoader {
     baseUrl = DEFAULT_BASE_URL,
     fetchImpl = fetch,
     palette,
-    quadtree,
+    voxelWorld,
     worldSeed = 0,
     onTileHydrated = null,
     editor = null
@@ -79,7 +79,7 @@ export class TilesetLoader {
     this.baseUrl = baseUrl.replace(/\/?$/, '/');
     this.fetchImpl = fetchImpl;
     this.palette = palette || null;
-    this.quadtree = quadtree || null;
+    this.voxelWorld = voxelWorld || null;
     this.worldSeed = worldSeed >>> 0;
     this.onTileHydrated = typeof onTileHydrated === 'function' ? onTileHydrated : null;
     this.editor = editor || null;
@@ -100,7 +100,7 @@ export class TilesetLoader {
     }
     this.index = await response.json();
     this.defaultTerrainKey = this.index?.layers?.terrain?.default || this.palette?.defaultTileKey || null;
-    if (this.quadtree && this.index?.root) {
+    if (this.voxelWorld && this.index?.root) {
       await this.ensureTile(this.index.root.lod, this.index.root.x, this.index.root.y);
     }
     return this.index;
@@ -110,14 +110,19 @@ export class TilesetLoader {
     this.worldSeed = (seed ?? 0) >>> 0;
   }
 
-  attachQuadtree(quadtree, { rehydrate = true } = {}) {
-    this.quadtree = quadtree || null;
-    if (!this.quadtree || !rehydrate) {
+  attachVoxelWorld(voxelWorld, { rehydrate = true } = {}) {
+    this.voxelWorld = voxelWorld || null;
+    if (!this.voxelWorld || !rehydrate) {
       return;
     }
     for (const tile of this.cache.values()) {
-      this._hydrateQuadtreeNode(tile);
+      this._hydrateVoxelChunk(tile);
     }
+  }
+
+  attachQuadtree(quadtree, options = {}) {
+    console.warn('[tilesetLoader] attachQuadtree is deprecated; use attachVoxelWorld instead.');
+    this.attachVoxelWorld(quadtree, options);
   }
 
   async ensureTile(lod, x, y, { hydrate = true } = {}) {
@@ -177,16 +182,16 @@ export class TilesetLoader {
 
   async _hydrateTile(tile) {
     if (!tile) return;
-    if (this.quadtree) {
-      this._hydrateQuadtreeNode(tile);
+    if (this.voxelWorld) {
+      this._hydrateVoxelChunk(tile);
     }
     if (this.onTileHydrated) {
       await this.onTileHydrated(tile);
     }
   }
 
-  _hydrateQuadtreeNode(tile) {
-    const node = this.quadtree.ensureNodeForTile(tile.lod ?? 0, tile.x ?? 0, tile.y ?? 0);
+  _hydrateVoxelChunk(tile) {
+    const node = this.voxelWorld.ensureNodeForTile(tile.lod ?? 0, tile.x ?? 0, tile.y ?? 0);
     const terrainLayer = cloneTerrainLayer(tile.layers?.terrain);
     const terrainKey = terrainLayer?.tileKey || this._randomTerrainKey(tile);
     const terrainId = this._resolveTerrainId(terrainKey);
@@ -204,7 +209,7 @@ export class TilesetLoader {
       ? this.editor.setSource(node.id, sourcePayload)
       : sourcePayload;
 
-    this.quadtree.setNodePayload(node.id, {
+    this.voxelWorld.setNodePayload(node.id, {
       terrain: terrainId,
       terrainPatches: combined.terrainPatches,
       vector: combined.vector,
@@ -229,7 +234,7 @@ export class TilesetLoader {
       statistics: tile.statistics ? { ...tile.statistics } : null,
       proceduralSeed: tile.proceduralSeed || this._tileSeed(tile.lod, tile.x, tile.y)
     };
-    this.quadtree.setMetadata(node.id, metadata);
+    this.voxelWorld.setMetadata(node.id, metadata);
     if (this.editor) {
       this.editor.setMetadataSource(node.id, metadata);
     }

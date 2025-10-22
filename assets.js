@@ -310,7 +310,7 @@ function createTilesetFactory(palette, options = {}) {
       baseUrl: mergedOptions.baseUrl || './data/',
       fetchImpl: mergedOptions.fetchImpl || fetch,
       palette,
-      quadtree: mergedOptions.quadtree || null,
+      voxelWorld: mergedOptions.voxelWorld || null,
       worldSeed: mergedOptions.worldSeed != null ? mergedOptions.worldSeed : (options.worldSeed ?? 0),
       onTileHydrated: mergedOptions.onTileHydrated || null,
       editor: mergedOptions.editor || null
