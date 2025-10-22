@@ -18,39 +18,35 @@ html, body {
   z-index: 10;
 }
 
-#palette {
-  display: flex;
-  flex-wrap: wrap;
-  margin-bottom: 4px;
-}
-
-#palette button {
-  width: 70px;
-  height: 28px;
-  margin: 2px;
+#modeControls button,
+#transportControls button,
+#seedControls button {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
   border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 12px;
+  background: #f0efe9;
+  border-radius: 4px;
+  transition: background 0.2s ease;
 }
 
-#fillAll,
-#addCart,
-#playPause,
-#saveBtn,
-#loadBtn {
-  margin: 2px;
-  padding: 4px 6px;
-  font-size: 14px;
-  cursor: pointer;
+#modeControls button.active {
+  background: #d1d9ff;
 }
 
-#seedControls {
+#modeControls button:hover,
+#transportControls button:hover,
+#seedControls button:hover {
+  background: #e0dfd7;
+}
+
+.control-group {
   display: flex;
-  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
+  margin-bottom: 6px;
+  align-items: center;
 }
 
 #seedControls label {
@@ -64,11 +60,24 @@ html, body {
   font-size: 12px;
 }
 
-#seedControls button {
-  margin: 0;
-  padding: 4px 6px;
+.info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 12px;
-  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.info-row {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.hint {
+  font-size: 11px;
+  color: #555;
+  margin-top: 8px;
+  max-width: 220px;
 }
 
 #canvas {

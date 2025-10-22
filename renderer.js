@@ -62,6 +62,19 @@ export class Renderer {
     this._cameraFitted = false;
     this.colors = defaultPaletteColors(world?.palette);
     this.diamondRenderer = new DiamondRenderer(world, this.camera, glyphs);
+    this.layerVisibility = {
+      terrain: true,
+      vector: true,
+      sprite: true,
+      effect: true
+    };
+    this.interactionState = {
+      hoveredNode: null,
+      hoveredBuilding: null,
+      selection: null,
+      measurement: null
+    };
+    this._zoomConstraints = { min: -4, max: 6 };
     this.resize(true);
     window.addEventListener('resize', () => this.resize());
   }
@@ -78,6 +91,7 @@ export class Renderer {
     if (forceFit || !this._cameraFitted) {
       this.fitCameraToWorld();
     }
+    this._updateCameraLimits();
   }
 
   fitCameraToWorld() {
@@ -97,6 +111,7 @@ export class Renderer {
     this.camera.x = offsetX - this.world.bounds.minX * this.camera.scale;
     this.camera.y = offsetY - this.world.bounds.minY * this.camera.scale;
     this._cameraFitted = true;
+    this._updateCameraLimits();
   }
 
   draw() {
@@ -115,6 +130,7 @@ export class Renderer {
     this.drawTerrainPass(ctx, view);
     this.drawVectorPass(ctx, view);
     this.drawSpritePass(ctx, view);
+    this._drawInteractionOverlays(ctx, view);
 
     ctx.restore();
   }
@@ -143,22 +159,137 @@ export class Renderer {
   }
 
   drawTerrainPass(ctx, view) {
+    if (!this.isLayerVisible('terrain')) return;
     const nodes = this.world.getVisibleNodes(view, view.zoom) || [];
     this.diamondRenderer.renderTerrain(ctx, nodes, view, this.colors);
   }
 
   drawVectorPass(ctx, view) {
+    if (!this.isLayerVisible('vector')) return;
     const layer = this.world.getVectorLayer();
     this.diamondRenderer.renderVectors(ctx, view, layer);
   }
 
   drawSpritePass(ctx, view) {
+    if (!this.isLayerVisible('sprite') && !this.isLayerVisible('effect')) return;
     const spriteLayer = this.world.getSpriteLayer();
-    this.diamondRenderer.renderSprites(ctx, view, spriteLayer, this.world.carts);
+    const shouldRenderSprites = this.isLayerVisible('sprite');
+    const shouldRenderEffects = this.isLayerVisible('effect');
+    const carts = shouldRenderEffects ? this.world.carts : [];
+    if (shouldRenderSprites) {
+      this.diamondRenderer.renderSprites(ctx, view, spriteLayer, carts);
+    } else if (shouldRenderEffects && Array.isArray(carts) && carts.length > 0) {
+      this.diamondRenderer.renderSprites(ctx, view, null, carts);
+    }
   }
 
   pickBuildingAt(px, py) {
     const worldPos = this.camera.screenToWorld(px, py);
     return this.diamondRenderer.pickBuildingAt(worldPos.x, worldPos.y);
+  }
+
+  setLayerVisibility(layer, visible) {
+    if (!(layer in this.layerVisibility)) {
+      return;
+    }
+    this.layerVisibility[layer] = Boolean(visible);
+  }
+
+  toggleLayer(layer) {
+    if (!(layer in this.layerVisibility)) {
+      return false;
+    }
+    this.layerVisibility[layer] = !this.layerVisibility[layer];
+    return this.layerVisibility[layer];
+  }
+
+  isLayerVisible(layer) {
+    if (!(layer in this.layerVisibility)) return true;
+    return this.layerVisibility[layer] !== false;
+  }
+
+  setInteractionState(state) {
+    this.interactionState = {
+      ...this.interactionState,
+      ...state
+    };
+  }
+
+  getZoomConstraints() {
+    return { ...this._zoomConstraints };
+  }
+
+  _drawInteractionOverlays(ctx) {
+    const state = this.interactionState || {};
+    if (!state) return;
+    ctx.save();
+    ctx.lineWidth = 1 / this.camera.scale;
+    ctx.strokeStyle = 'rgba(255, 220, 80, 0.9)';
+    ctx.fillStyle = 'rgba(255, 220, 80, 0.2)';
+
+    if (state.hoveredNode?.bounds) {
+      const { minX, minY, maxX, maxY } = state.hoveredNode.bounds;
+      const width = maxX - minX;
+      const height = maxY - minY;
+      ctx.strokeRect(minX, minY, width, height);
+    }
+
+    if (state.hoveredBuilding?.path instanceof Path2D) {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fill(state.hoveredBuilding.path);
+      ctx.restore();
+      ctx.stroke(state.hoveredBuilding.path);
+    }
+
+    if (state.selection?.bounds) {
+      const { minX, minY, maxX, maxY } = state.selection.bounds;
+      const width = maxX - minX;
+      const height = maxY - minY;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(82, 141, 255, 0.9)';
+      ctx.lineWidth = 2 / this.camera.scale;
+      ctx.strokeRect(minX, minY, width, height);
+      ctx.restore();
+    }
+
+    if (state.measurement?.start && state.measurement?.end) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(82, 141, 255, 0.85)';
+      ctx.lineWidth = 2 / this.camera.scale;
+      ctx.beginPath();
+      ctx.moveTo(state.measurement.start.x, state.measurement.start.y);
+      ctx.lineTo(state.measurement.end.x, state.measurement.end.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  _computeMaxZoomNormalized() {
+    const thresholds = this.world?.terrain?.zoomThresholds;
+    if (!Array.isArray(thresholds) || thresholds.length === 0) {
+      return 6;
+    }
+    const finite = thresholds.filter((value) => Number.isFinite(value));
+    if (finite.length === 0) {
+      return 6;
+    }
+    const maxThreshold = finite[finite.length - 1];
+    return maxThreshold + 0.75;
+  }
+
+  _updateCameraLimits() {
+    const base = this.camera.baseScale > 0 ? this.camera.baseScale : 1;
+    const minScale = base * 0.05;
+    const maxNormalized = this._computeMaxZoomNormalized();
+    const maxScale = base * Math.pow(2, maxNormalized);
+    this.camera.setScaleLimits(minScale, maxScale);
+    const minNormalized = Math.log2(this.camera.minScale / base);
+    this._zoomConstraints = {
+      min: Number.isFinite(minNormalized) ? minNormalized : -4,
+      max: maxNormalized
+    };
   }
 }

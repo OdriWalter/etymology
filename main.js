@@ -1,30 +1,29 @@
 // main.js - entry point tying together world, renderer, input and UI
 import { World, DEFAULT_WORLD_SEED } from './world.js';
 import { Renderer } from './renderer.js';
-import { Input } from './input.js';
+import { InteractionController } from './input.js';
 import { loadAssets } from './assets.js';
 
 const WORLD_BOUNDS = { minX: 0, minY: 0, maxX: 1024, maxY: 1024 };
 
-function populatePaletteUI(palette, input) {
-  const paletteDiv = document.getElementById('palette');
-  paletteDiv.innerHTML = '';
-  palette.tiles.forEach((tile) => {
-    const btn = document.createElement('button');
-    btn.textContent = tile.name;
-    btn.style.backgroundColor = tile.color;
-    btn.onclick = () => {
-      input.currentTileId = tile.id;
-      Array.from(paletteDiv.children).forEach(child => {
-        child.style.outline = '';
-      });
-      btn.style.outline = '2px solid black';
-    };
-    paletteDiv.appendChild(btn);
-  });
-  if (paletteDiv.children.length > 0) {
-    paletteDiv.children[0].click();
-  }
+function formatNodeLabel(node) {
+  if (!node) return '—';
+  const name = node.metadata?.name || node.id;
+  const level = node.metadata?.levelLabel ? ` (${node.metadata.levelLabel})` : '';
+  return `${name}${level}`;
+}
+
+function formatBuildingLabel(building) {
+  if (!building) return '—';
+  const level = building.level ? ` (${building.level})` : '';
+  return `${building.id}${level}`;
+}
+
+function updateLayerStatus(renderer, element) {
+  if (!element || !renderer) return;
+  const entries = Object.entries(renderer.layerVisibility)
+    .map(([key, visible]) => `${key}: ${visible ? 'on' : 'off'}`);
+  element.textContent = `Layers · ${entries.join(' · ')}`;
 }
 
 async function init() {
@@ -49,15 +48,69 @@ async function init() {
       seedInput.value = world.seed.toString();
     }
     const renderer = new Renderer(canvas, world, glyphs);
-    const input = new Input(canvas, renderer, world);
-    input.currentTileId = palette.defaultTileId;
+    const controller = new InteractionController(canvas, renderer, world);
 
-    populatePaletteUI(palette, input);
+    const modeButtons = document.querySelectorAll('[data-mode]');
+    const hoverInfo = document.getElementById('hoverInfo');
+    const selectionInfo = document.getElementById('selectionInfo');
+    const measurementInfo = document.getElementById('measurementInfo');
+    const layerStatus = document.getElementById('layerStatus');
+
+    modeButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        controller.setMode(btn.dataset.mode);
+        modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === controller.mode));
+      });
+    });
+
+    modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === controller.mode));
+
+    controller.on('mode-change', ({ detail }) => {
+      modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === detail.mode));
+    });
+
+    controller.on('hover', ({ detail }) => {
+      if (!hoverInfo) return;
+      if (detail.building) {
+        hoverInfo.textContent = `Hover · Building ${formatBuildingLabel(detail.building)} in ${formatNodeLabel(detail.node)}`;
+      } else if (detail.node) {
+        hoverInfo.textContent = `Hover · Node ${formatNodeLabel(detail.node)}`;
+      } else {
+        hoverInfo.textContent = 'Hover · —';
+      }
+    });
+
+    controller.on('selection', ({ detail }) => {
+      if (!selectionInfo) return;
+      if (detail.building) {
+        selectionInfo.textContent = `Selection · Building ${formatBuildingLabel(detail.building)} in ${formatNodeLabel(detail.node)}`;
+      } else if (detail.node) {
+        selectionInfo.textContent = `Selection · Node ${formatNodeLabel(detail.node)}`;
+      } else {
+        selectionInfo.textContent = 'Selection · —';
+      }
+    });
+
+    const updateMeasurementInfo = (detail) => {
+      if (!measurementInfo) return;
+      const distance = detail?.distance ? detail.distance.toFixed(1) : '0';
+      measurementInfo.textContent = `Measurement · ${distance}`;
+    };
+
+    controller.on('measurement-update', ({ detail }) => updateMeasurementInfo(detail));
+    controller.on('measurement-complete', ({ detail }) => updateMeasurementInfo(detail));
+
+    controller.on('layer-toggle', () => updateLayerStatus(renderer, layerStatus));
+    if (hoverInfo) hoverInfo.textContent = 'Hover · —';
+    if (selectionInfo) selectionInfo.textContent = 'Selection · —';
+    updateMeasurementInfo(null);
+    updateLayerStatus(renderer, layerStatus);
 
     const updateSeedUI = () => {
       if (seedInput) {
         seedInput.value = world.seed.toString();
       }
+      controller.update(frameTime);
       renderer.draw();
     };
 
@@ -94,21 +147,6 @@ async function init() {
         tilesetLoader.setWorldSeed(world.seed);
         tilesetLoader.attachQuadtree(world.getTerrainLayer().quadtree);
         updateSeedUI();
-      };
-    }
-
-    // Add cart button
-    const addCartBtn = document.getElementById('addCart');
-    addCartBtn.onclick = () => {
-      const cart = world.addCart();
-      world.carts.forEach(c => c.selected = false);
-      cart.selected = true;
-    };
-
-    const fillAllBtn = document.getElementById('fillAll');
-    if (fillAllBtn) {
-      fillAllBtn.onclick = () => {
-        world.assignTileToAll(input.currentTileId);
       };
     }
 
@@ -179,14 +217,17 @@ async function init() {
         accumulator = 0;
       }
 
+      controller.update(frameTime);
       renderer.draw();
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
   } catch (err) {
     console.error('Failed to initialize engine', err);
-    const paletteDiv = document.getElementById('palette');
-    paletteDiv.textContent = 'Failed to load assets';
+    const selectionInfo = document.getElementById('selectionInfo');
+    if (selectionInfo) {
+      selectionInfo.textContent = 'Failed to load assets';
+    }
   }
 }
 
