@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "chunk": {
+    "x": 1,
+    "y": 0
+  },
+  "sprites": [
+    {
+      "id": "oak_1_0_2",
+      "voxelId": 2,
+      "spriteKey": "oak_tree",
+      "position": {
+        "x": 10,
+        "y": 6,
+        "z": 5
+      },
+      "paletteRemap": {
+        "canopy": "forest",
+        "trunk": "mountain"
+      }
+    }
+  ]
+}

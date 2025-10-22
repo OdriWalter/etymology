@@ -144,6 +144,20 @@ function buildSearchIndex(quadtree) {
   return records;
 }
 
+function buildVoxelSearchIndex(voxelWorld) {
+  const records = new Map();
+  if (!voxelWorld || typeof voxelWorld.streamCells !== 'function') {
+    return records;
+  }
+  for (const node of voxelWorld.streamCells()) {
+    const record = toSearchRecord(node);
+    if (record) {
+      records.set(record.id, record);
+    }
+  }
+  return records;
+}
+
 function findSearchMatches(index, query) {
   if (!query) return [];
   const term = query.trim().toLowerCase();
@@ -233,32 +247,43 @@ async function init() {
   }
 
   try {
-    const { palette, glyphs, createTilesetLoader } = await loadAssets();
+    const { palette, glyphs, createVoxelLoader } = await loadAssets();
     const world = new World(palette, {
       bounds: WORLD_BOUNDS,
       seed: DEFAULT_WORLD_SEED,
       autoSeed: false
     });
 
-    let lastLoadedTile = null;
-    const tilesetLoader = createTilesetLoader({
-      quadtree: world.getTerrainLayer().quadtree,
-      worldSeed: world.seed,
-      editor: world.editor,
-      onTileHydrated: (tile) => {
-        lastLoadedTile = tile;
-        indexTile(tile);
-      }
-    });
-
-    await tilesetLoader.bootstrap();
+    const voxelLoader = createVoxelLoader({ palette, glyphs, worldSeed: world.seed });
+    await voxelLoader.bootstrap();
+    await voxelLoader.loadAllChunks();
+    const voxelWorld = voxelLoader.getWorld();
+    world.useVoxelTerrain(voxelWorld);
+    updateTileStatus();
 
     const renderer = new Renderer(canvas, world, glyphs);
     const controller = new InteractionController(canvas, renderer, world);
 
-    const quadtree = world.getTerrainLayer().quadtree;
-    let searchIndex = buildSearchIndex(quadtree);
+    const terrainLayer = world.getTerrainLayer();
+    const quadtree = terrainLayer.quadtree;
+    const voxelTerrain = terrainLayer.voxel;
+    let searchIndex = voxelTerrain
+      ? buildVoxelSearchIndex(voxelTerrain)
+      : buildSearchIndex(quadtree);
     const authoringState = { target: null, dirty: false };
+    const authoringEnabled = !voxelTerrain;
+
+    if (!authoringEnabled) {
+      if (authoringPanel) {
+        authoringPanel.hidden = true;
+        authoringPanel.setAttribute('aria-hidden', 'true');
+      }
+      if (authoringStatusText) {
+        authoringStatusText.textContent = 'Authoring disabled for voxel terrain';
+      }
+      if (subdivideBtn) subdivideBtn.disabled = true;
+      if (clearNodeEditsBtn) clearNodeEditsBtn.disabled = true;
+    }
 
     function setAuthoringError(message) {
       if (!authorError) return;
@@ -336,6 +361,7 @@ async function init() {
     }
 
     function updateAuthoringButtons() {
+      if (!authoringEnabled) return;
       if (authorApplyBtn) {
         authorApplyBtn.disabled = !(authoringState.target && authoringState.dirty);
       }
@@ -399,6 +425,7 @@ async function init() {
     }
 
     function populateAuthoring(detail) {
+      if (!authoringEnabled) return;
       if (!authoringPanel) return;
       if (!detail || (!detail.building && !detail.node)) {
         resetAuthoringForm();
@@ -470,6 +497,7 @@ async function init() {
     }
 
     function refreshCurrentSelection() {
+      if (!authoringEnabled) return;
       if (!currentSelection) return;
       if (currentSelection.node?.id) {
         const node = quadtree.getNode(currentSelection.node.id);
@@ -493,6 +521,7 @@ async function init() {
     }
 
     function handleApply() {
+      if (!authoringEnabled) return;
       if (!authoringState.target) return;
       const values = gatherFormValues();
       if (!values) return;
@@ -545,6 +574,7 @@ async function init() {
     }
 
     function handleDiscard() {
+      if (!authoringEnabled) return;
       if (!authoringState.target) return;
       populateAuthoring(currentSelection);
       authoringState.dirty = false;
@@ -552,66 +582,58 @@ async function init() {
       updateAuthoringButtons();
     }
 
-    if (authoringForm) {
-      authoringForm.addEventListener('input', () => {
-        if (!authoringState.target) return;
-        authoringState.dirty = true;
-        updateAuthoringButtons();
-        clearAuthoringError();
-      });
-      authoringForm.addEventListener('submit', (event) => {
-        event.preventDefault();
-        handleApply();
-      });
-    }
+    if (authoringEnabled) {
+      if (authoringForm) {
+        authoringForm.addEventListener('input', () => {
+          if (!authoringState.target) return;
+          authoringState.dirty = true;
+          updateAuthoringButtons();
+          clearAuthoringError();
+        });
+        authoringForm.addEventListener('submit', (event) => {
+          event.preventDefault();
+          handleApply();
+        });
+      }
 
-    if (authorApplyBtn) {
-      authorApplyBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        handleApply();
-      });
-    }
+      if (authorApplyBtn) {
+        authorApplyBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          handleApply();
+        });
+      }
 
-    if (authorDiscardBtn) {
-      authorDiscardBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        handleDiscard();
-      });
-    }
+      if (authorDiscardBtn) {
+        authorDiscardBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          handleDiscard();
+        });
+      }
 
-    if (subdivideBtn) {
-      subdivideBtn.addEventListener('click', async (event) => {
-        event.preventDefault();
-        const nodeId = currentSelection?.node?.id || authoringState.target?.nodeId || null;
-        if (!nodeId) return;
-        const children = world.subdivideNode(nodeId) || [];
-        if (children.length && tilesetLoader) {
-          for (const child of children) {
-            const position = child?.metadata?.position;
-            if (position && Number.isInteger(position.lod) && Number.isInteger(position.x) && Number.isInteger(position.y)) {
-              try {
-                await tilesetLoader.ensureTile(position.lod, position.x, position.y);
-              } catch (err) {
-                console.warn('Failed to hydrate subdivided child', err);
-              }
-            }
+      if (subdivideBtn) {
+        subdivideBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          const nodeId = currentSelection?.node?.id || authoringState.target?.nodeId || null;
+          if (!nodeId) return;
+          const children = world.subdivideNode(nodeId) || [];
+          if (children.length && quadtree) {
+            searchIndex = buildSearchIndex(quadtree);
           }
-          searchIndex = buildSearchIndex(quadtree);
-        }
-        refreshAuthoringSummary();
-      });
-    }
+          refreshAuthoringSummary();
+        });
+      }
 
-    if (clearNodeEditsBtn) {
-      clearNodeEditsBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        const nodeId = authoringState.target?.nodeId || currentSelection?.node?.id || null;
-        if (!nodeId) return;
-        world.clearNodeEdits(nodeId);
-        refreshCurrentSelection();
-        populateAuthoring(currentSelection);
-        refreshAuthoringSummary();
-      });
+      if (clearNodeEditsBtn) {
+        clearNodeEditsBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          const nodeId = authoringState.target?.nodeId || currentSelection?.node?.id || null;
+          if (!nodeId) return;
+          world.clearNodeEdits(nodeId);
+          refreshCurrentSelection();
+          populateAuthoring(currentSelection);
+          refreshAuthoringSummary();
+        });
+      }
     }
 
     function refreshLayerSummary() {
@@ -623,6 +645,10 @@ async function init() {
     function updateDepthDisplay(node) {
       if (!quadtreeDepth) return;
       const depth = node?.lod ?? 0;
+      if (voxelTerrain) {
+        quadtreeDepth.textContent = `Voxel LOD · ${depth}`;
+        return;
+      }
       quadtreeDepth.textContent = `Depth · ${depth} / ${quadtree.maxLod}`;
     }
 
@@ -666,39 +692,15 @@ async function init() {
 
     function updateTileStatus() {
       if (!tileStatus) return;
-      const pending = tilesetLoader?.inFlight?.size ?? 0;
-      const pieces = [`Tiles · ${pending > 0 ? `loading (${pending})` : 'idle'}`];
-      if (lastLoadedTile) {
-        pieces.push(`LOD ${lastLoadedTile.lod} (${lastLoadedTile.x},${lastLoadedTile.y})`);
+      const pending = voxelLoader?.inFlight?.size ?? 0;
+      const loaded = voxelTerrain?.chunks?.size ?? voxelWorld?.chunks?.size ?? voxelWorld?.chunks?.length ?? 0;
+      const total = voxelWorld?.grid ? voxelWorld.grid.width * voxelWorld.grid.height : loaded;
+      const pieces = [`Chunks · ${loaded}/${total}`];
+      if (pending > 0) {
+        pieces.push(`loading ${pending}`);
       }
       tileStatus.textContent = pieces.join(' · ');
       tileStatus.dataset.state = pending > 0 ? 'loading' : 'idle';
-    }
-
-    function indexTile(tile) {
-      if (!tile) return;
-      try {
-        const target = quadtree.ensureNodeForTile(tile.lod ?? 0, tile.x ?? 0, tile.y ?? 0);
-        if (target) {
-          const record = toSearchRecord(target);
-          if (record) {
-            searchIndex.set(record.id, record);
-          }
-          let parentId = target.parentId;
-          while (parentId) {
-            const parent = quadtree.getNode(parentId);
-            if (!parent) break;
-            const parentRecord = toSearchRecord(parent);
-            if (parentRecord) {
-              searchIndex.set(parentRecord.id, parentRecord);
-            }
-            parentId = parent.parentId;
-          }
-        }
-      } catch (err) {
-        console.warn('[search] Failed to index tile node', err);
-      }
-      updateTileStatus();
     }
 
     function renderSearch(matches) {
@@ -727,13 +729,14 @@ async function init() {
 
     async function focusNode(nodeId) {
       if (!nodeId) return;
-      const node = quadtree.getNode(nodeId);
+      let node = null;
+      if (voxelTerrain) {
+        node = voxelTerrain.getCellById(nodeId);
+      } else if (quadtree) {
+        node = quadtree.getNode(nodeId);
+      }
       if (!node) {
         return;
-      }
-      const position = node.metadata?.position;
-      if (position && Number.isInteger(position.lod) && Number.isInteger(position.x) && Number.isInteger(position.y)) {
-        await tilesetLoader.ensureTile(position.lod, position.x, position.y);
       }
       controller.focusOnBounds(node.bounds, 0.2);
       const payload = {
@@ -914,17 +917,28 @@ async function init() {
               parsedHeader = null;
             }
             if (parsedHeader?.type === 'editorPatch') {
+              if (!authoringEnabled) {
+                alert('Editor patches are disabled when voxel terrain is active.');
+                return;
+              }
               world.applyEditorPatch(text);
               searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
+              refreshCurrentSelection();
+              populateAuthoring(currentSelection);
+              refreshAuthoringSummary();
             } else {
+              if (voxelTerrain) {
+                alert('Voxel terrain import is not supported through this loader.');
+                return;
+              }
               world.deserialize(text);
               searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
               refreshLayerSummary();
               renderer.fitCameraToWorld();
+              refreshCurrentSelection();
+              populateAuthoring(currentSelection);
+              refreshAuthoringSummary();
             }
-            refreshCurrentSelection();
-            populateAuthoring(currentSelection);
-            refreshAuthoringSummary();
           } catch (err) {
             alert('Failed to load world: ' + (err?.message || err));
           }

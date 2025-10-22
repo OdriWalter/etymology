@@ -202,7 +202,8 @@ export class World {
       terrain: {
         zoomMin: DEFAULT_ZOOM_MIN,
         zoomMax: DEFAULT_ZOOM_MAX,
-        quadtree: this.terrain
+        quadtree: this.terrain,
+        voxel: null
       },
       vector: {
         zoomMin: DEFAULT_ZOOM_MIN,
@@ -221,6 +222,7 @@ export class World {
       }
     };
 
+    this.voxelWorld = null;
     this.cartAgents = [];
     this.carts = this.cartAgents;
     this.nextCartId = 1;
@@ -231,6 +233,9 @@ export class World {
   }
 
   _seedTerrain(targetLod = 3) {
+    if (this.voxelWorld) {
+      return;
+    }
     const availableTiles = this.palette?.tiles?.map(tile => tile.id) || [];
     const root = this.terrain.getNode(this.terrain.rootId);
     if (!root) return;
@@ -268,6 +273,10 @@ export class World {
   }
 
   setSeed(seed) {
+    if (this.voxelWorld) {
+      console.warn('[world] setSeed is ignored when voxel terrain is active');
+      return;
+    }
     const nextSeed = normaliseSeed(seed);
     if (nextSeed === this.seed) {
       return;
@@ -287,6 +296,30 @@ export class World {
     }
   }
 
+  useVoxelTerrain(voxelWorld, { syncBounds = true } = {}) {
+    this.voxelWorld = voxelWorld || null;
+    this.layers.terrain.voxel = this.voxelWorld;
+    this.layers.terrain.quadtree = this.voxelWorld ? null : this.terrain;
+    if (this.voxelWorld && syncBounds && this.voxelWorld.bounds) {
+      this.bounds = normaliseBounds(this.voxelWorld.bounds);
+    }
+    if (this.voxelWorld && this.editor) {
+      this.editor.clearAll();
+    }
+    this._editedNodes.clear();
+    this.refreshVoxelLayers();
+  }
+
+  refreshVoxelLayers() {
+    if (!this.voxelWorld) {
+      return;
+    }
+    const placements = this.voxelWorld.getSpritePlacements?.();
+    if (Array.isArray(placements)) {
+      this.layers.sprite.placements = placements.map((placement) => ({ ...placement }));
+    }
+  }
+
   get width() {
     return this.bounds.maxX - this.bounds.minX;
   }
@@ -300,10 +333,16 @@ export class World {
   }
 
   getVisibleNodes(viewBounds, zoom) {
+    if (this.voxelWorld) {
+      return this.voxelWorld.getVisibleNodes(viewBounds, zoom);
+    }
     return this.terrain.getVisibleNodes(viewBounds, zoom);
   }
 
   subdivideNode(nodeId) {
+    if (this.voxelWorld) {
+      return [];
+    }
     const children = this.terrain.subdivideNode(nodeId);
     if (children && children.length) {
       const tiles = this.palette?.tiles?.map(tile => tile.id) || [];
@@ -315,6 +354,16 @@ export class World {
   }
 
   sampleFeatureAt(point, zoom) {
+    if (this.voxelWorld) {
+      const result = this.voxelWorld.sampleCell(point);
+      if (!result) return null;
+      const { node } = result;
+      return {
+        node,
+        tile: this.getTileDescriptor(node?.payloadRefs?.terrain),
+        payload: node?.payloadRefs || {}
+      };
+    }
     const node = this.terrain.sampleFeatureAt(point, zoom);
     if (!node) return null;
     return {
@@ -325,6 +374,10 @@ export class World {
   }
 
   assignTileAt(point, zoom, tileId) {
+    if (this.voxelWorld) {
+      console.warn('[world] assignTileAt is disabled for voxel terrain');
+      return null;
+    }
     if (!this.palette?.byId?.[tileId]) {
       return null;
     }
@@ -335,6 +388,10 @@ export class World {
   }
 
   assignTileToAll(tileId) {
+    if (this.voxelWorld) {
+      console.warn('[world] assignTileToAll is disabled for voxel terrain');
+      return;
+    }
     if (!this.palette?.byId?.[tileId]) return;
     for (const record of this.terrain.streamNodes()) {
       if (record.type !== 'node') continue;
@@ -390,6 +447,13 @@ export class World {
   }
 
   getTerrainLayer() {
+    if (this.voxelWorld) {
+      this.layers.terrain.voxel = this.voxelWorld;
+      this.layers.terrain.quadtree = null;
+    } else {
+      this.layers.terrain.quadtree = this.terrain;
+      this.layers.terrain.voxel = null;
+    }
     return this.layers.terrain;
   }
 
@@ -457,6 +521,9 @@ export class World {
   }
 
   clearNodeEdits(nodeId) {
+    if (this.voxelWorld) {
+      return false;
+    }
     if (!this.editor || !nodeId) {
       return false;
     }
@@ -468,6 +535,9 @@ export class World {
   }
 
   getEditorSummary() {
+    if (this.voxelWorld) {
+      return [];
+    }
     if (!this.editor) {
       return [];
     }
@@ -475,6 +545,9 @@ export class World {
   }
 
   hasUnsavedEdits(nodeId = null) {
+    if (this.voxelWorld) {
+      return false;
+    }
     if (!this.editor) {
       return false;
     }
@@ -486,6 +559,9 @@ export class World {
   }
 
   exportEditorPatch() {
+    if (this.voxelWorld) {
+      return '';
+    }
     if (!this.editor) {
       return '';
     }
@@ -493,6 +569,9 @@ export class World {
   }
 
   applyEditorPatch(serialized) {
+    if (this.voxelWorld) {
+      return [];
+    }
     if (!this.editor) {
       return [];
     }
@@ -649,6 +728,16 @@ export class World {
   }
 
   serialize() {
+    if (this.voxelWorld) {
+      const record = {
+        type: 'world',
+        version: 3,
+        mode: 'voxel',
+        seed: this.seed,
+        bounds: { ...this.bounds }
+      };
+      return JSON.stringify(record);
+    }
     const records = [];
     records.push({
       type: 'world',
@@ -676,6 +765,10 @@ export class World {
   }
 
   deserialize(serialized) {
+    if (this.voxelWorld) {
+      console.warn('[world] deserialize is not supported for voxel terrain yet');
+      return;
+    }
     const records = typeof serialized === 'string'
       ? serialized.split('\n').map(line => line.trim()).filter(Boolean).map(line => JSON.parse(line))
       : Array.isArray(serialized)

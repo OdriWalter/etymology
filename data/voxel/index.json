@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "id": "beregszasz_voxel",
+  "title": "Beregszász Canopy Survey (Voxel Prototype)",
+  "description": "Prototype voxel dataset derived from the Beregszász survey with synthetic canopy and water volumes.",
+  "bounds": { "minX": 0, "minY": 0, "maxX": 1024, "maxY": 1024 },
+  "origin": { "x": 0, "y": 0, "z": 0 },
+  "scale": { "x": 32, "y": 32, "z": 12 },
+  "chunkSize": { "width": 16, "depth": 16, "height": 8 },
+  "chunkGrid": { "width": 2, "height": 2 },
+  "binaryLayout": {
+    "encoding": "base64",
+    "heightfield": {
+      "type": "uint8",
+      "offset": 0,
+      "length": 256,
+      "stride": 1,
+      "scale": 1,
+      "interpretation": "voxel_layers"
+    },
+    "voxels": {
+      "type": "uint8",
+      "offset": 256,
+      "length": 2048,
+      "stride": 1,
+      "order": "column-major",
+      "axisOrder": ["y", "x", "z"],
+      "description": "For each column (y * width + x), store height-layer voxels from bottom to top"
+    }
+  },
+  "palette": {
+    "voxels": [
+      { "id": 0, "key": "air", "tileKey": "grass", "solid": false },
+      { "id": 1, "key": "soil", "tileKey": "grass", "solid": true },
+      { "id": 2, "key": "canopy", "tileKey": "forest", "solid": true, "spriteKey": "oak_tree" },
+      { "id": 3, "key": "water", "tileKey": "water", "solid": false },
+      { "id": 4, "key": "mountain_cap", "tileKey": "mountain", "solid": true }
+    ],
+    "sprites": [
+      {
+        "id": "oak_tree",
+        "glyph": "tree7x7",
+        "defaultPalette": {
+          "canopy": "forest",
+          "trunk": "mountain"
+        },
+        "anchor": { "x": 3.5, "y": 6 }
+      }
+    ]
+  },
+  "spriteLayer": {
+    "maxPerChunk": 16,
+    "placement": "world",
+    "defaultScale": 1
+  },
+  "chunkTemplate": "chunks/{x}_{y}"
+}

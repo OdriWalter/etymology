@@ -796,13 +796,30 @@ export class DiamondRenderer {
 
   _buildSpriteCache(placement) {
     const glyph = this.glyphs?.byKey?.[placement.spriteKey || placement.key];
+    const canvas = placement.canvas || glyph?.canvas || null;
     return {
       sprite: glyph,
-      key: placement.spriteKey || placement.key
+      key: placement.spriteKey || placement.key,
+      canvas
     };
   }
 
   _drawSprite(ctx, cached, placement) {
+    if (cached?.canvas) {
+      ctx.save();
+      const scale = (placement.scale || 1) / this.camera.scale;
+      const anchorX = placement.anchor?.x || 0;
+      const anchorY = placement.anchor?.y || 0;
+      ctx.translate(placement.position.x, placement.position.y);
+      if (placement.rotation) {
+        ctx.rotate(placement.rotation);
+      }
+      ctx.scale(scale, scale);
+      ctx.translate(-anchorX, -anchorY);
+      ctx.drawImage(cached.canvas, 0, 0);
+      ctx.restore();
+      return;
+    }
     if (!cached?.sprite?.commands) return;
     const commands = cached.sprite.commands;
     ctx.save();
