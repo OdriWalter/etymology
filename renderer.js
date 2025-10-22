@@ -72,7 +72,8 @@ export class Renderer {
       hoveredNode: null,
       hoveredBuilding: null,
       selection: null,
-      measurement: null
+      measurement: null,
+      editSession: null
     };
     this._zoomConstraints = { min: -4, max: 6 };
     this.resize(true);
@@ -186,6 +187,11 @@ export class Renderer {
   pickBuildingAt(px, py) {
     const worldPos = this.camera.screenToWorld(px, py);
     return this.diamondRenderer.pickBuildingAt(worldPos.x, worldPos.y);
+  }
+
+  pickProxyAt(px, py, filter) {
+    const worldPos = this.camera.screenToWorld(px, py);
+    return this.diamondRenderer.pickProxyAt(worldPos.x, worldPos.y, filter);
   }
 
   setLayerVisibility(layer, visible) {
@@ -305,6 +311,58 @@ export class Renderer {
       ctx.moveTo(state.measurement.start.x, state.measurement.start.y);
       ctx.lineTo(state.measurement.end.x, state.measurement.end.y);
       ctx.stroke();
+      ctx.restore();
+    }
+
+    if (state.editSession?.vertices?.length) {
+      const edit = state.editSession;
+      const vertices = edit.vertices || [];
+      ctx.save();
+      ctx.lineWidth = 2 / this.camera.scale;
+      ctx.strokeStyle = 'rgba(82, 255, 141, 0.9)';
+      ctx.fillStyle = 'rgba(82, 255, 141, 0.18)';
+      ctx.beginPath();
+      ctx.moveTo(vertices[0].x, vertices[0].y);
+      for (let i = 1; i < vertices.length; i++) {
+        ctx.lineTo(vertices[i].x, vertices[i].y);
+      }
+      if (edit.preview) {
+        ctx.lineTo(edit.preview.x, edit.preview.y);
+      }
+      if (edit.geometry === 'polygon' && vertices.length >= 3) {
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      const handleRadius = 5 / this.camera.scale;
+      for (let i = 0; i < vertices.length; i++) {
+        const vertex = vertices[i];
+        ctx.beginPath();
+        ctx.arc(vertex.x, vertex.y, handleRadius, 0, Math.PI * 2);
+        const isActive = i === edit.activeIndex;
+        const isHover = !isActive && edit.hoverIndex != null && edit.activeIndex == null && i === edit.hoverIndex;
+        const isClosable = edit.closable && i === 0 && edit.geometry === 'polygon';
+        ctx.fillStyle = isActive
+          ? '#ffcc33'
+          : isHover
+            ? 'rgba(255, 226, 138, 0.9)'
+            : isClosable
+              ? 'rgba(255, 255, 255, 0.9)'
+              : 'rgba(255, 255, 255, 0.85)';
+        ctx.strokeStyle = isActive || isHover ? 'rgba(82, 141, 255, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+        ctx.lineWidth = 1 / this.camera.scale;
+        ctx.fill();
+        ctx.stroke();
+      }
+      if (edit.preview) {
+        ctx.beginPath();
+        ctx.arc(edit.preview.x, edit.preview.y, handleRadius * 0.8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(82, 255, 141, 0.6)';
+        ctx.fill();
+      }
       ctx.restore();
     }
 
