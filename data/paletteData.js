@@ -46,6 +46,13 @@ export default {
       "category": "land"
     },
     {
+      "key": "urban",
+      "name": "Urban Core",
+      "color": "#c24b3a",
+      "texture": "urban_tile",
+      "category": "city"
+    },
+    {
       "key": "road",
       "name": "Road",
       "color": "#a07a52",

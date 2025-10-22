@@ -26,7 +26,8 @@ Each node stores:
 - **`metadata`** – structural data describing the administrative layer, parent
   lineage, and last modification timestamp.
 - **`payloadRefs`** – handles to resolved content such as terrain palette ids,
-  vector feature ids, sprite batches, or streaming resources.
+  vector feature ids, parcel geometry, building footprints, sprite batches, or
+  deferred streaming resources.
 
 ## Coordinate System
 

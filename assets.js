@@ -1,5 +1,6 @@
 import embeddedPaletteData from './data/paletteData.js';
 import embeddedGlyphData from './data/glyphsData.js';
+import { TilesetLoader } from './data/tilesetLoader.js';
 
 const PALETTE_PATH = './data/palette.json';
 const GLYPHS_PATH = './data/glyphs.json';
@@ -302,6 +303,20 @@ function logAssetSummary(palette, glyphs, source) {
   }
 }
 
+function createTilesetFactory(palette, options = {}) {
+  return function instantiateTilesetLoader(tilesetOptions = {}) {
+    const mergedOptions = { ...options.tileset, ...tilesetOptions };
+    return new TilesetLoader({
+      baseUrl: mergedOptions.baseUrl || './data/',
+      fetchImpl: mergedOptions.fetchImpl || fetch,
+      palette,
+      quadtree: mergedOptions.quadtree || null,
+      worldSeed: mergedOptions.worldSeed != null ? mergedOptions.worldSeed : (options.worldSeed ?? 0),
+      onTileHydrated: mergedOptions.onTileHydrated || null
+    });
+  };
+}
+
 export async function loadAssets(options = {}) {
   const preferFetch = options.preferFetch === true;
   let paletteJson;
@@ -335,5 +350,6 @@ export async function loadAssets(options = {}) {
   const palette = buildPaletteLUT(paletteJson);
   const glyphs = buildGlyphRegistry(glyphJson, palette.colors);
   logAssetSummary(palette, glyphs, source);
-  return { palette, glyphs };
+  const tilesetFactory = createTilesetFactory(palette, options);
+  return { palette, glyphs, createTilesetLoader: tilesetFactory };
 }

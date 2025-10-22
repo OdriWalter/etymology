@@ -89,6 +89,8 @@ function cloneNode(node) {
     payloadRefs: {
       terrain: node.payloadRefs.terrain,
       vector: [...node.payloadRefs.vector],
+      parcels: [...node.payloadRefs.parcels],
+      buildings: [...node.payloadRefs.buildings],
       sprites: [...node.payloadRefs.sprites],
       effects: [...node.payloadRefs.effects]
     },
@@ -126,6 +128,8 @@ export class QuadtreeWorld {
       payloadRefs: {
         terrain: null,
         vector: [],
+        parcels: [],
+        buildings: [],
         sprites: [],
         effects: []
       },
@@ -153,10 +157,55 @@ export class QuadtreeWorld {
       node.payloadRefs = {
         terrain: payloadRefs.terrain ?? node.payloadRefs.terrain ?? null,
         vector: payloadRefs.vector ? [...payloadRefs.vector] : [...node.payloadRefs.vector],
+        parcels: payloadRefs.parcels ? [...payloadRefs.parcels] : [...node.payloadRefs.parcels],
+        buildings: payloadRefs.buildings ? [...payloadRefs.buildings] : [...node.payloadRefs.buildings],
         sprites: payloadRefs.sprites ? [...payloadRefs.sprites] : [...node.payloadRefs.sprites],
         effects: payloadRefs.effects ? [...payloadRefs.effects] : [...node.payloadRefs.effects]
       };
     });
+  }
+
+  ensureNodeForTile(lod, tileX, tileY) {
+    if (!Number.isInteger(lod) || lod < 0) {
+      throw new Error('LOD must be a non-negative integer');
+    }
+    if (!Number.isInteger(tileX) || tileX < 0) {
+      throw new Error('tileX must be a non-negative integer');
+    }
+    if (!Number.isInteger(tileY) || tileY < 0) {
+      throw new Error('tileY must be a non-negative integer');
+    }
+    const tilesPerAxis = 1 << lod;
+    if (tileX >= tilesPerAxis || tileY >= tilesPerAxis) {
+      throw new Error(`Tile coordinates (${tileX}, ${tileY}) out of range for lod ${lod}`);
+    }
+    let node = this.nodes.get(this.rootId);
+    if (!node) {
+      throw new Error('Quadtree root node is missing');
+    }
+    if (lod === 0) {
+      return node;
+    }
+    for (let depth = lod - 1; depth >= 0; depth--) {
+      if (node.children.length !== 4) {
+        this.subdivideNode(node.id);
+        node = this.nodes.get(node.id);
+      }
+      const mask = 1 << depth;
+      const column = (tileX & mask) !== 0 ? 1 : 0;
+      const row = (tileY & mask) !== 0 ? 1 : 0;
+      let childIndex = 0;
+      if (row === 0 && column === 1) childIndex = 1;
+      else if (row === 1 && column === 0) childIndex = 2;
+      else if (row === 1 && column === 1) childIndex = 3;
+      const childId = node.children[childIndex];
+      const child = this.nodes.get(childId);
+      if (!child) {
+        throw new Error(`Failed to resolve child node for tile (${lod}, ${tileX}, ${tileY})`);
+      }
+      node = child;
+    }
+    return node;
   }
 
   setMetadata(nodeId, metadata) {
@@ -289,6 +338,8 @@ export class QuadtreeWorld {
         payloadRefs: {
           terrain: node.payloadRefs.terrain,
           vector: [...node.payloadRefs.vector],
+          parcels: [...node.payloadRefs.parcels],
+          buildings: [...node.payloadRefs.buildings],
           sprites: [...node.payloadRefs.sprites],
           effects: [...node.payloadRefs.effects]
         },
@@ -342,6 +393,8 @@ export class QuadtreeWorld {
         payloadRefs: {
           terrain: record.payloadRefs?.terrain ?? null,
           vector: Array.isArray(record.payloadRefs?.vector) ? [...record.payloadRefs.vector] : [],
+          parcels: Array.isArray(record.payloadRefs?.parcels) ? [...record.payloadRefs.parcels] : [],
+          buildings: Array.isArray(record.payloadRefs?.buildings) ? [...record.payloadRefs.buildings] : [],
           sprites: Array.isArray(record.payloadRefs?.sprites) ? [...record.payloadRefs.sprites] : [],
           effects: Array.isArray(record.payloadRefs?.effects) ? [...record.payloadRefs.effects] : []
         },

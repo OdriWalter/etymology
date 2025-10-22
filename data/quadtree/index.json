@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "id": "beregszasz",
+  "title": "Beregszász Multi-Resolution Survey",
+  "description": "Nested survey tiles describing the Beregszász (Berehove) basin with terrain, transport, parcels, and buildings.",
+  "attribution": "City of Beregszász Planning Office (fictional), 2024",
+  "coordinateSystem": "EPSG:3857",
+  "units": "meters",
+  "origin": { "x": 0, "y": 0 },
+  "bounds": { "minX": 0, "minY": 0, "maxX": 1024, "maxY": 1024 },
+  "lodRange": { "min": 0, "max": 3 },
+  "tileTemplate": "tiles/{lod}/{x}_{y}.json",
+  "layers": {
+    "terrain": {
+      "id": "global-terrain",
+      "kind": "raster",
+      "description": "Palette-indexed ground cover and elevation hints spanning Zakarpattia.",
+      "paletteKeys": ["grass", "forest", "water", "mountain"],
+      "default": "grass"
+    },
+    "vectors": {
+      "id": "regional-vectors",
+      "kind": "polyline",
+      "description": "Major rivers, railways, and arterial roads entering the Beregszász valley."
+    },
+    "parcels": {
+      "id": "city-parcels",
+      "kind": "polygon",
+      "description": "Generalized cadastral parcels for neighbourhood scale navigation.",
+      "schema": {
+        "parcelId": "string",
+        "landUse": "string"
+      }
+    },
+    "buildings": {
+      "id": "building-footprints",
+      "kind": "polygon",
+      "description": "Simplified building footprints used when zoomed to street level.",
+      "schema": {
+        "buildingId": "string",
+        "storeys": "number"
+      }
+    }
+  },
+  "root": {
+    "lod": 0,
+    "x": 0,
+    "y": 0,
+    "id": "root",
+    "children": 4,
+    "title": "Beregszász drainage basin"
+  },
+  "metadata": {
+    "city": "Beregszász",
+    "alternateNames": ["Berehove", "Берегове"],
+    "country": "Ukraine",
+    "oblast": "Zakarpattia",
+    "population": 23769,
+    "populationYear": 2023,
+    "notes": "Demonstration dataset for quadtree hydration showcasing Beregszász landmarks and neighbourhood structure.",
+    "centroid": { "x": 512, "y": 512 }
+  }
+}

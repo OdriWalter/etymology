@@ -1,0 +1,42 @@
+{
+  "lod": 1,
+  "x": 1,
+  "y": 0,
+  "id": "root:1",
+  "bounds": { "minX": 512, "minY": 512, "maxX": 1024, "maxY": 1024 },
+  "layers": {
+    "terrain": {
+      "tileKey": "grass",
+      "patches": [
+        {
+          "tileKey": "forest",
+          "polygon": [
+            { "x": 768, "y": 768 },
+            { "x": 720, "y": 896 },
+            { "x": 864, "y": 960 },
+            { "x": 896, "y": 832 }
+          ]
+        }
+      ]
+    },
+    "vectors": {
+      "features": [
+        {
+          "id": "rail-beregszasz",
+          "kind": "railway",
+          "properties": { "name": "Chop – Batiovo" },
+          "line": [
+            { "x": 512, "y": 736 },
+            { "x": 704, "y": 704 },
+            { "x": 896, "y": 672 },
+            { "x": 1024, "y": 640 }
+          ]
+        }
+      ]
+    },
+    "parcels": { "features": [] },
+    "buildings": { "features": [] }
+  },
+  "children": [],
+  "proceduralSeed": "beregszasz:1:1:0"
+}

@@ -29,7 +29,7 @@ function populatePaletteUI(palette, input) {
 
 async function init() {
   try {
-    const { palette, glyphs } = await loadAssets();
+    const { palette, glyphs, createTilesetLoader } = await loadAssets();
     const canvas = document.getElementById('canvas');
     const seedInput = document.getElementById('seedInput');
     const applySeedBtn = document.getElementById('applySeed');
@@ -39,7 +39,12 @@ async function init() {
       ? seedInput.value.trim()
       : DEFAULT_WORLD_SEED;
 
-    const world = new World(palette, { bounds: WORLD_BOUNDS, seed: initialSeedValue });
+    const world = new World(palette, { bounds: WORLD_BOUNDS, seed: initialSeedValue, autoSeed: false });
+    const tilesetLoader = createTilesetLoader({
+      quadtree: world.getTerrainLayer().quadtree,
+      worldSeed: world.seed
+    });
+    await tilesetLoader.bootstrap();
     if (seedInput) {
       seedInput.value = world.seed.toString();
     }
@@ -63,6 +68,8 @@ async function init() {
       const numeric = Number(raw);
       const nextSeed = Number.isFinite(numeric) ? numeric : raw;
       world.setSeed(nextSeed);
+      tilesetLoader.setWorldSeed(world.seed);
+      tilesetLoader.attachQuadtree(world.getTerrainLayer().quadtree);
       updateSeedUI();
     };
 
@@ -84,6 +91,8 @@ async function init() {
       randomSeedBtn.onclick = () => {
         const randomSeed = Math.floor(Math.random() * 0xffffffff);
         world.setSeed(randomSeed);
+        tilesetLoader.setWorldSeed(world.seed);
+        tilesetLoader.attachQuadtree(world.getTerrainLayer().quadtree);
         updateSeedUI();
       };
     }
