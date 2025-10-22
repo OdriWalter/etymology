@@ -1,3 +1,5 @@
+import { DiamondRenderer } from './renderer/diamondRenderer.js';
+
 export class Camera {
   constructor() {
     this.x = 0;
@@ -41,10 +43,6 @@ export class Camera {
   }
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function defaultPaletteColors(palette) {
   return {
     ocean: palette?.colors?.oceanMid || '#2d7ab6',
@@ -63,6 +61,7 @@ export class Renderer {
     this.camera = new Camera();
     this._cameraFitted = false;
     this.colors = defaultPaletteColors(world?.palette);
+    this.diamondRenderer = new DiamondRenderer(world, this.camera, glyphs);
     this.resize(true);
     window.addEventListener('resize', () => this.resize());
   }
@@ -75,6 +74,7 @@ export class Renderer {
     this.canvas.height = Math.floor(height * dpr);
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
+    this.diamondRenderer.setDevicePixelRatio(dpr);
     if (forceFit || !this._cameraFitted) {
       this.fitCameraToWorld();
     }
@@ -112,9 +112,9 @@ export class Renderer {
     ctx.setTransform(this.camera.scale, 0, 0, this.camera.scale, this.camera.x, this.camera.y);
 
     this._drawOcean(ctx);
-    this._drawTerrain(ctx, view);
-    this._drawVectorFeatures(ctx, view);
-    this._drawCarts(ctx, view);
+    this.drawTerrainPass(ctx, view);
+    this.drawVectorPass(ctx, view);
+    this.drawSpritePass(ctx, view);
 
     ctx.restore();
   }
@@ -142,106 +142,23 @@ export class Renderer {
     ctx.fillRect(bounds.minX, bounds.minY, this.world.width, this.world.height);
   }
 
-  _drawTerrain(ctx, view) {
+  drawTerrainPass(ctx, view) {
     const nodes = this.world.getVisibleNodes(view, view.zoom) || [];
-    for (const node of nodes) {
-      this._drawNode(ctx, node, view.zoom);
-    }
+    this.diamondRenderer.renderTerrain(ctx, nodes, view, this.colors);
   }
 
-  _drawNode(ctx, node, zoom) {
-    const color = this._resolveNodeColor(node);
-    const { minX, minY, maxX, maxY } = node.bounds;
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const halfWidth = (maxX - minX) / 2;
-    const halfHeight = (maxY - minY) / 2;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(centerX, minY);
-    ctx.lineTo(maxX, centerY);
-    ctx.lineTo(centerX, maxY);
-    ctx.lineTo(minX, centerY);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    const strokeAlpha = clamp(0.15 + zoom * 0.08, 0.15, 0.6);
-    ctx.strokeStyle = `rgba(0,0,0,${strokeAlpha.toFixed(3)})`;
-    ctx.lineWidth = Math.max(0.5, Math.min(2.0, (Math.max(halfWidth, halfHeight) * 0.1)));
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  _resolveNodeColor(node) {
-    const tileId = node?.payloadRefs?.terrain;
-    const descriptor = this.world.getTileDescriptor(tileId);
-    if (descriptor?.color) {
-      return descriptor.color;
-    }
-    return '#b9d87b';
-  }
-
-  _drawVectorFeatures(ctx, view) {
+  drawVectorPass(ctx, view) {
     const layer = this.world.getVectorLayer();
-    if (!layer || !Array.isArray(layer.features)) return;
-    for (const feature of layer.features) {
-      if (!feature) continue;
-      if (feature.zoomMin != null && view.zoom < feature.zoomMin) continue;
-      if (feature.zoomMax != null && view.zoom > feature.zoomMax) continue;
-      if (feature.poly && feature.poly.length >= 3) {
-        ctx.save();
-        ctx.beginPath();
-        feature.poly.forEach((p, index) => {
-          if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-        });
-        ctx.closePath();
-        if (feature.style?.fillStyle) {
-          ctx.fillStyle = feature.style.fillStyle;
-          ctx.fill();
-        }
-        ctx.strokeStyle = feature.style?.strokeStyle || this.colors.terrainStroke;
-        ctx.lineWidth = feature.style?.lineWidth || 1 / this.camera.scale;
-        ctx.stroke();
-        ctx.restore();
-        continue;
-      }
-      const points = feature.line;
-      if (!points || points.length < 2) continue;
-      ctx.save();
-      ctx.beginPath();
-      points.forEach((p, index) => {
-        if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-      });
-      ctx.strokeStyle = feature.style?.strokeStyle || this.colors.terrainStroke;
-      ctx.lineWidth = feature.style?.lineWidth || 1.5 / this.camera.scale;
-      ctx.stroke();
-      ctx.restore();
-    }
+    this.diamondRenderer.renderVectors(ctx, view, layer);
   }
 
-  _drawCarts(ctx, view) {
-    if (!Array.isArray(this.world.carts)) return;
-    const baseRadius = Math.max(this.world.width, this.world.height) * 0.01;
-    for (const cart of this.world.carts) {
-      if (!cart) continue;
-      const radius = cart.selected ? baseRadius * 1.2 : baseRadius;
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cart.position.x, cart.position.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = cart.selected ? '#ffcc33' : '#333333';
-      ctx.fill();
-      if (cart.path.length >= 2 && (!cart.pathZoomMin || view.zoom >= cart.pathZoomMin)) {
-        ctx.beginPath();
-        cart.path.forEach((p, index) => {
-          if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-        });
-        ctx.strokeStyle = cart.pathColor || 'rgba(0,0,0,0.6)';
-        ctx.lineWidth = (cart.pathWidth || radius * 0.5);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
+  drawSpritePass(ctx, view) {
+    const spriteLayer = this.world.getSpriteLayer();
+    this.diamondRenderer.renderSprites(ctx, view, spriteLayer, this.world.carts);
+  }
+
+  pickBuildingAt(px, py) {
+    const worldPos = this.camera.screenToWorld(px, py);
+    return this.diamondRenderer.pickBuildingAt(worldPos.x, worldPos.y);
   }
 }
