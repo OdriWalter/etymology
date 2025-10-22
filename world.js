@@ -198,6 +198,7 @@ export class World {
     });
     this.editor = new WorldEditor();
     this._editedNodes = new Set();
+    this.voxels = new VoxelWorld({ palette: this.palette, chunkSize: 32, maxHeight: 96 });
 
     this.layers = {
       terrain: {
@@ -394,6 +395,84 @@ export class World {
 
   getEffectLayer() {
     return this.layers.effect;
+  }
+
+  getVoxelMaterials() {
+    if (!this.palette) {
+      return [this.voxels?.defaultMaterial ?? 'grass'];
+    }
+    const materials = new Set();
+    if (this.palette.materials) {
+      for (const key of Object.keys(this.palette.materials)) {
+        materials.add(key);
+      }
+    }
+    if (this.palette.colors) {
+      for (const key of Object.keys(this.palette.colors)) {
+        materials.add(key);
+      }
+    }
+    if (materials.size === 0 && this.voxels?.defaultMaterial) {
+      materials.add(this.voxels.defaultMaterial);
+    }
+    return Array.from(materials);
+  }
+
+  getVoxelColumnAt(worldX, worldY) {
+    if (!this.voxels) {
+      return null;
+    }
+    return this.voxels.pickColumn(worldX, worldY);
+  }
+
+  forEachVoxelColumn(bounds, callback) {
+    if (!this.voxels || !bounds || !callback) {
+      return;
+    }
+    this.voxels.forEachColumnInBounds(bounds, callback);
+  }
+
+  beginVoxelStroke(metadata = null) {
+    if (!this.voxels) {
+      return null;
+    }
+    return this.voxels.beginStroke(metadata);
+  }
+
+  commitVoxelStroke() {
+    if (!this.voxels) {
+      return false;
+    }
+    return this.voxels.commitStroke();
+  }
+
+  cancelVoxelStroke() {
+    if (!this.voxels) {
+      return;
+    }
+    this.voxels.cancelStroke();
+  }
+
+  undoVoxelEdit() {
+    if (!this.voxels) {
+      return false;
+    }
+    return this.voxels.undo();
+  }
+
+  redoVoxelEdit() {
+    if (!this.voxels) {
+      return false;
+    }
+    return this.voxels.redo();
+  }
+
+  canUndoVoxelEdit() {
+    return this.voxels?.canUndo?.() || false;
+  }
+
+  canRedoVoxelEdit() {
+    return this.voxels?.canRedo?.() || false;
   }
 
   addTerrainPatch(nodeId, patch = {}) {

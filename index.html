@@ -2,18 +2,53 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Worldbox‑like engine</title>
+  <title>Voxel Authoring Sandbox</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="ui" class="ui-panels">
-    <section id="searchPanel" class="panel">
-      <header>Search</header>
-      <div class="search-row">
-        <input type="search" id="searchInput" placeholder="Search settlements, parcels, or tiles" aria-label="Search world" />
-        <button id="searchClear" aria-label="Clear search" title="Clear search">×</button>
+    <section id="modesPanel" class="panel">
+      <header>Modes</header>
+      <div id="modeControls" class="mode-toggle" role="group" aria-label="Interaction mode">
+        <button data-mode="navigate" class="active">Navigate</button>
+        <button data-mode="voxel-paint">Paint</button>
+        <button data-mode="voxel-erase">Erase</button>
+        <button data-mode="voxel-sculpt">Sculpt</button>
+        <button data-mode="voxel-prop">Prop</button>
       </div>
-      <ul id="searchResults" class="search-results" aria-label="Search results"></ul>
+      <div class="control-group">
+        <button id="undoVoxel" type="button" disabled>Undo</button>
+        <button id="redoVoxel" type="button" disabled>Redo</button>
+      </div>
+    </section>
+
+    <section id="brushPanel" class="panel">
+      <header>Voxel Brush</header>
+      <div class="form-field">
+        <label for="brushRadius">Radius <span id="brushRadiusValue">2.0</span></label>
+        <input type="range" id="brushRadius" min="0.5" max="32" step="0.5" value="2" />
+      </div>
+      <div class="form-field">
+        <label for="brushLayer">Layer</label>
+        <select id="brushLayer">
+          <option value="terrain" selected>Terrain</option>
+          <option value="prop">Props</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="brushMaterial">Material</label>
+        <select id="brushMaterial"></select>
+      </div>
+      <div class="form-field">
+        <label for="brushHeightDelta">Height Δ</label>
+        <input type="number" id="brushHeightDelta" min="1" max="32" value="1" />
+      </div>
+      <div class="form-field">
+        <label for="brushPropId">Prop Id</label>
+        <input type="text" id="brushPropId" placeholder="e.g. torch" />
+      </div>
+      <label class="checkbox-field"><input type="checkbox" id="brushColumn" /> Affect column</label>
+      <div id="brushSummary" class="panel-subtext">paint · radius 2</div>
     </section>
 
     <section id="layersPanel" class="panel">
@@ -25,77 +60,10 @@
       <div id="layerSummary" class="panel-subtext">terrain:on · vector:on · sprite:on · effect:on</div>
     </section>
 
-    <section id="contextPanel" class="panel">
-      <header>Context</header>
-      <div id="quadtreeDepth" class="context-row">Depth · 0 / 0</div>
-      <div id="tileStatus" class="context-row">Tiles · idle</div>
-      <div id="hoverSummary" class="context-row">Hover · —</div>
-      <div id="selectionSummary" class="context-row">Selection · —</div>
-      <div id="measurementInfo" class="context-row">Measurement · 0</div>
-      <div class="context-divider"></div>
-      <div class="context-row heading">Selected attributes</div>
-      <dl id="selectedAttributes" class="attribute-list"></dl>
-      <div class="context-divider"></div>
-      <div id="modeControls" class="mode-toggle" role="group" aria-label="Interaction mode">
-        <button data-mode="navigate" class="active">Navigate</button>
-        <button data-mode="measure">Measure</button>
-        <button data-mode="metadata">Metadata</button>
-      </div>
-      <div id="transportControls" class="control-group">
-        <button id="playPause">Play</button>
-        <button id="saveBtn">Save</button>
-        <input type="file" id="loadInput" style="display:none;" accept=".ndjson,.json,.txt">
-        <button id="loadBtn">Load</button>
-      </div>
+    <section id="inspectorPanel" class="panel">
+      <header>Inspector</header>
+      <div id="voxelHoverInfo" class="context-row">Hover a voxel to inspect.</div>
     </section>
-
-    <section id="authoringPanel" class="panel">
-      <header>Authoring</header>
-      <div class="panel-subtext authoring-status">
-        <span id="unsavedIndicator" class="unsaved-indicator" hidden aria-hidden="true" title="Unsaved edits">●</span>
-        <span id="authoringStatusText">No selection</span>
-      </div>
-      <div id="authoringModeControls" class="mode-toggle" role="group" aria-label="Authoring mode">
-        <button type="button" data-mode="edit-terrain">Terrain</button>
-        <button type="button" data-mode="edit-vector">Vector</button>
-        <button type="button" data-mode="edit-building">Buildings</button>
-      </div>
-      <form id="authoringForm" class="form-stack" autocomplete="off">
-        <div class="form-field">
-          <label for="authorName">Name</label>
-          <input type="text" id="authorName" placeholder="e.g. City Hall" />
-        </div>
-        <div class="form-field">
-          <label for="authorLandUse">Land use</label>
-          <input type="text" id="authorLandUse" placeholder="Residential, civic…" />
-        </div>
-        <div class="form-field">
-          <label for="authorStoreys">Storeys</label>
-          <input type="number" id="authorStoreys" min="0" step="1" inputmode="numeric" />
-        </div>
-        <div class="form-field">
-          <label for="authorTags">Tags</label>
-          <input type="text" id="authorTags" placeholder="Comma separated" />
-        </div>
-      </form>
-      <div class="control-group authoring-actions">
-        <button id="authorApply" type="button" disabled>Apply changes</button>
-        <button id="authorDiscard" type="button" disabled>Discard</button>
-      </div>
-      <div id="authoringError" class="form-error" role="status" aria-live="polite"></div>
-      <div class="context-divider"></div>
-      <div class="context-row heading">Pending edits</div>
-      <ul id="authoringEdits" class="edits-list"></ul>
-      <div class="context-divider"></div>
-      <div class="control-group subdivision-controls">
-        <button id="subdivideSelected" type="button" disabled>Subdivide node</button>
-        <button id="clearNodeEdits" type="button" disabled>Clear node edits</button>
-      </div>
-    </section>
-  </div>
-
-  <div id="breadcrumbsOverlay" class="overlay-panel">
-    <span id="breadcrumbsTrail">World overview</span>
   </div>
 
   <canvas id="canvas"></canvas>
