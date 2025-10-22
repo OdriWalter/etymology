@@ -1,0 +1,81 @@
+{
+  "lod": 0,
+  "x": 0,
+  "y": 0,
+  "id": "root",
+  "bounds": { "minX": 0, "minY": 0, "maxX": 1024, "maxY": 1024 },
+  "layers": {
+    "terrain": {
+      "tileKey": "forest",
+      "patches": [
+        {
+          "tileKey": "mountain",
+          "polygon": [
+            { "x": 128, "y": 896 },
+            { "x": 196, "y": 960 },
+            { "x": 384, "y": 1008 },
+            { "x": 356, "y": 864 }
+          ]
+        },
+        {
+          "tileKey": "water",
+          "polygon": [
+            { "x": 64, "y": 352 },
+            { "x": 96, "y": 288 },
+            { "x": 448, "y": 128 },
+            { "x": 512, "y": 176 },
+            { "x": 224, "y": 384 }
+          ]
+        }
+      ]
+    },
+    "vectors": {
+      "features": [
+        {
+          "id": "tisza-river",
+          "kind": "river",
+          "properties": { "name": "Tisza" },
+          "line": [
+            { "x": 0, "y": 540 },
+            { "x": 96, "y": 512 },
+            { "x": 224, "y": 464 },
+            { "x": 364, "y": 432 },
+            { "x": 512, "y": 408 },
+            { "x": 640, "y": 392 },
+            { "x": 768, "y": 376 },
+            { "x": 1024, "y": 344 }
+          ]
+        },
+        {
+          "id": "beregszasz-arterial",
+          "kind": "road",
+          "properties": { "name": "M23" },
+          "line": [
+            { "x": 0, "y": 288 },
+            { "x": 256, "y": 320 },
+            { "x": 512, "y": 352 },
+            { "x": 1024, "y": 416 }
+          ]
+        }
+      ]
+    },
+    "parcels": { "features": [] },
+    "buildings": { "features": [] }
+  },
+  "children": [
+    { "lod": 1, "x": 0, "y": 0, "id": "root:0" },
+    { "lod": 1, "x": 1, "y": 0, "id": "root:1" },
+    { "lod": 1, "x": 0, "y": 1, "id": "root:2" },
+    { "lod": 1, "x": 1, "y": 1, "id": "root:3" }
+  ],
+  "proceduralSeed": "beregszasz:0:0:0",
+  "statistics": {
+    "dominant": "forest",
+    "coverage": {
+      "forest": 0.62,
+      "mountain": 0.15,
+      "water": 0.08,
+      "grass": 0.15
+    }
+  }
+}

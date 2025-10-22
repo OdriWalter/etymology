@@ -157,7 +157,7 @@ function normaliseBounds(bounds) {
 }
 
 export class World {
-  constructor(palette, { bounds, seed, maxLod = 5, zoomThresholds } = {}) {
+  constructor(palette, { bounds, seed, maxLod = 5, zoomThresholds, autoSeed = true } = {}) {
     if (!palette) {
       throw new Error('Palette is required to create a World');
     }
@@ -166,6 +166,7 @@ export class World {
     this.bounds = normaliseBounds(bounds);
     this.seed = normaliseSeed(seed);
     this._rng = createMulberry32(this.seed);
+    this.autoSeed = autoSeed !== false;
 
     this.terrain = new QuadtreeWorld({
       bounds: this.bounds,
@@ -200,7 +201,9 @@ export class World {
     this.carts = this.cartAgents;
     this.nextCartId = 1;
 
-    this._seedTerrain();
+    if (this.autoSeed) {
+      this._seedTerrain();
+    }
   }
 
   _seedTerrain(targetLod = 3) {
@@ -251,7 +254,9 @@ export class World {
     const zoomThresholds = this.terrain.zoomThresholds;
     this.terrain = new QuadtreeWorld({ bounds: this.bounds, maxLod, zoomThresholds });
     this.layers.terrain.quadtree = this.terrain;
-    this._seedTerrain();
+    if (this.autoSeed) {
+      this._seedTerrain();
+    }
   }
 
   get width() {

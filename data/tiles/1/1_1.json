@@ -1,0 +1,119 @@
+{
+  "lod": 1,
+  "x": 1,
+  "y": 1,
+  "id": "root:3",
+  "bounds": { "minX": 512, "minY": 0, "maxX": 1024, "maxY": 512 },
+  "layers": {
+    "terrain": {
+      "tileKey": "grass",
+      "patches": [
+        {
+          "tileKey": "urban",
+          "polygon": [
+            { "x": 640, "y": 160 },
+            { "x": 864, "y": 192 },
+            { "x": 896, "y": 64 },
+            { "x": 672, "y": 32 }
+          ]
+        }
+      ]
+    },
+    "vectors": {
+      "features": [
+        {
+          "id": "highway-m23",
+          "kind": "road",
+          "properties": { "name": "M23" },
+          "line": [
+            { "x": 512, "y": 288 },
+            { "x": 640, "y": 256 },
+            { "x": 768, "y": 224 },
+            { "x": 896, "y": 192 },
+            { "x": 1024, "y": 176 }
+          ]
+        },
+        {
+          "id": "main-square",
+          "kind": "plaza",
+          "properties": { "name": "Kossuth Square" },
+          "poly": [
+            { "x": 736, "y": 208 },
+            { "x": 784, "y": 208 },
+            { "x": 784, "y": 160 },
+            { "x": 736, "y": 160 }
+          ]
+        }
+      ]
+    },
+    "parcels": {
+      "features": [
+        {
+          "id": "parcel-core-01",
+          "properties": { "parcelId": "B-101", "landUse": "Civic" },
+          "poly": [
+            { "x": 704, "y": 224 },
+            { "x": 816, "y": 224 },
+            { "x": 816, "y": 128 },
+            { "x": 704, "y": 128 }
+          ]
+        },
+        {
+          "id": "parcel-core-02",
+          "properties": { "parcelId": "B-102", "landUse": "Residential" },
+          "poly": [
+            { "x": 816, "y": 224 },
+            { "x": 928, "y": 224 },
+            { "x": 928, "y": 128 },
+            { "x": 816, "y": 128 }
+          ]
+        }
+      ]
+    },
+    "buildings": {
+      "features": [
+        {
+          "id": "city-hall",
+          "properties": { "buildingId": "B-101-1", "storeys": 3 },
+          "poly": [
+            { "x": 744, "y": 200 },
+            { "x": 776, "y": 200 },
+            { "x": 776, "y": 176 },
+            { "x": 744, "y": 176 }
+          ]
+        },
+        {
+          "id": "lyceum",
+          "properties": { "buildingId": "B-101-2", "storeys": 2 },
+          "poly": [
+            { "x": 704, "y": 176 },
+            { "x": 736, "y": 176 },
+            { "x": 736, "y": 144 },
+            { "x": 704, "y": 144 }
+          ]
+        },
+        {
+          "id": "reformed-church",
+          "properties": { "buildingId": "B-102-1", "storeys": 2 },
+          "poly": [
+            { "x": 864, "y": 200 },
+            { "x": 888, "y": 200 },
+            { "x": 888, "y": 168 },
+            { "x": 864, "y": 168 }
+          ]
+        }
+      ]
+    }
+  },
+  "children": [],
+  "proceduralSeed": "beregszasz:1:1:1",
+  "statistics": {
+    "dominant": "urban",
+    "coverage": {
+      "urban": 0.35,
+      "grass": 0.4,
+      "water": 0.05,
+      "forest": 0.2
+    }
+  }
+}
