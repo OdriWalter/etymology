@@ -259,7 +259,6 @@ async function init() {
     await voxelLoader.loadAllChunks();
     const voxelWorld = voxelLoader.getWorld();
     world.useVoxelTerrain(voxelWorld);
-    updateTileStatus();
 
     const renderer = new Renderer(canvas, world, glyphs);
     const controller = new InteractionController(canvas, renderer, world);
