@@ -4,8 +4,7 @@ import { Renderer } from './renderer.js';
 import { Input } from './input.js';
 import { loadAssets } from './assets.js';
 
-const COLS = 50;
-const ROWS = 50;
+const WORLD_BOUNDS = { minX: 0, minY: 0, maxX: 1024, maxY: 1024 };
 
 function populatePaletteUI(palette, input) {
   const paletteDiv = document.getElementById('palette');
@@ -40,7 +39,7 @@ async function init() {
       ? seedInput.value.trim()
       : DEFAULT_WORLD_SEED;
 
-    const world = new World(COLS, ROWS, palette, undefined, initialSeedValue);
+    const world = new World(palette, { bounds: WORLD_BOUNDS, seed: initialSeedValue });
     if (seedInput) {
       seedInput.value = world.seed.toString();
     }
@@ -100,7 +99,7 @@ async function init() {
     const fillAllBtn = document.getElementById('fillAll');
     if (fillAllBtn) {
       fillAllBtn.onclick = () => {
-        world.fillAllTiles(input.currentTileId);
+        world.assignTileToAll(input.currentTileId);
       };
     }
 
@@ -115,13 +114,12 @@ async function init() {
     // Save button
     const saveBtn = document.getElementById('saveBtn');
     saveBtn.onclick = () => {
-      const data = world.serialize();
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
+      const ndjson = world.serialize();
+      const blob = new Blob([ndjson], { type: 'application/x-ndjson' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'world.json';
+      a.download = 'world.ndjson';
       a.click();
       URL.revokeObjectURL(url);
     };
@@ -139,8 +137,8 @@ async function init() {
       const reader = new FileReader();
       reader.onload = (ev) => {
         try {
-          const data = JSON.parse(ev.target.result);
-          world.deserialize(data);
+          const text = ev.target.result;
+          world.deserialize(text);
           updateSeedUI();
           renderer.fitCameraToWorld();
         } catch (ex) {

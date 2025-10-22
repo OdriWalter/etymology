@@ -29,6 +29,9 @@ export class Input {
       this.lastPanY = e.clientY;
     } else if (e.button === 0) {
       const worldPos = this.renderer.camera.screenToWorld(x, y);
+      const zoom = typeof this.renderer.camera.getNormalizedZoom === 'function'
+        ? this.renderer.camera.getNormalizedZoom()
+        : 0;
       if (e.shiftKey) {
         const cart = this.world.selectedCart;
         if (cart) {
@@ -42,7 +45,7 @@ export class Input {
         const point = this.world.clampToBounds(worldPos.x, worldPos.y);
         const selected = this.world.selectCartAt(point.x, point.y);
         if (!selected) {
-          this.world.paintTile(point.x, point.y, this.currentTileId);
+          this.world.assignTileAt(point, zoom, this.currentTileId);
         }
       }
     }
@@ -62,7 +65,10 @@ export class Input {
       const py = e.clientY - rect.top;
       const worldPos = this.renderer.camera.screenToWorld(px, py);
       const point = this.world.clampToBounds(worldPos.x, worldPos.y);
-      this.world.paintTile(point.x, point.y, this.currentTileId);
+      const zoom = typeof this.renderer.camera.getNormalizedZoom === 'function'
+        ? this.renderer.camera.getNormalizedZoom()
+        : 0;
+      this.world.assignTileAt(point, zoom, this.currentTileId);
     }
   }
 
