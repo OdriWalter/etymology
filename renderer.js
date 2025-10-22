@@ -209,10 +209,54 @@ export class Renderer {
   }
 
   setInteractionState(state) {
-    this.interactionState = {
+    const nextState = {
       ...this.interactionState,
       ...state
     };
+
+    if (state && Object.prototype.hasOwnProperty.call(state, 'hoveredBuilding')) {
+      const hover = state.hoveredBuilding;
+      if (hover && hover.id) {
+        const proxy = this.diamondRenderer.hitProxies.get(hover.id);
+        if (proxy) {
+          nextState.hoveredBuilding = {
+            ...proxy,
+            ...hover,
+            metadata: {
+              ...(proxy.metadata || null),
+              ...(hover.metadata || null)
+            }
+          };
+        } else {
+          nextState.hoveredBuilding = hover;
+        }
+      } else {
+        nextState.hoveredBuilding = hover || null;
+      }
+    }
+
+    if (state && Object.prototype.hasOwnProperty.call(state, 'selection') && state.selection?.building?.id) {
+      const selection = state.selection;
+      const building = selection.building;
+      const proxy = this.diamondRenderer.hitProxies.get(building.id);
+      if (proxy) {
+        nextState.selection = {
+          ...selection,
+          building: {
+            ...proxy,
+            ...building,
+            metadata: {
+              ...(proxy.metadata || null),
+              ...(building.metadata || null)
+            }
+          }
+        };
+      } else {
+        nextState.selection = selection;
+      }
+    }
+
+    this.interactionState = nextState;
   }
 
   getZoomConstraints() {

@@ -73,6 +73,17 @@ function buildPathFromVertices(vertices) {
   return path;
 }
 
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
 export class DiamondRenderer {
   constructor(world, camera, glyphs, options = {}) {
     this.world = world;
@@ -311,52 +322,104 @@ export class DiamondRenderer {
   }
 
   _generateBuildingFootprints(node) {
-    const level = node.metadata?.levelLabel;
-    if (level !== 'parcel' && level !== 'building' && node.lod < (this.options.buildingLod ?? 4)) {
+    const features = node?.payloadRefs?.buildings;
+    if (!Array.isArray(features) || features.length === 0) {
       return null;
     }
-    const bounds = node.bounds;
-    const width = bounds.maxX - bounds.minX;
-    const height = bounds.maxY - bounds.minY;
-    const count = Math.max(3, Math.round(Math.sqrt(width + height)));
-    const gridX = Math.max(2, Math.min(6, Math.round(count * 0.75)));
-    const gridY = Math.max(2, Math.min(6, Math.round(count * 0.6)));
-    const marginX = width * 0.1;
-    const marginY = height * 0.1;
-    const cellW = (width - marginX * 2) / gridX;
-    const cellH = (height - marginY * 2) / gridY;
+
+    const level = node.metadata?.levelLabel || 'building';
     const footprints = [];
-    let index = 0;
-    for (let gx = 0; gx < gridX; gx++) {
-      for (let gy = 0; gy < gridY; gy++) {
-        const skip = pseudoRandom(node.id, gx * 31 + gy * 17) > 0.85;
-        if (skip) continue;
-        const jitterX = (pseudoRandom(node.id, gx * 13 + gy * 19) - 0.5) * cellW * 0.25;
-        const jitterY = (pseudoRandom(node.id, gx * 23 + gy * 11) - 0.5) * cellH * 0.25;
-        const minX = bounds.minX + marginX + gx * cellW + jitterX;
-        const minY = bounds.minY + marginY + gy * cellH + jitterY;
-        const footprintW = cellW * clamp(0.4 + pseudoRandom(node.id, 100 + gx * 7 + gy * 5) * 0.5, 0.4, 0.9);
-        const footprintH = cellH * clamp(0.4 + pseudoRandom(node.id, 200 + gx * 5 + gy * 7) * 0.5, 0.4, 0.9);
-        const footprint = {
-          id: `${node.id}:building:${index++}`,
-          path: buildPathFromVertices([
-            { x: minX, y: minY },
-            { x: minX + footprintW, y: minY },
-            { x: minX + footprintW, y: minY + footprintH },
-            { x: minX, y: minY + footprintH }
-          ]),
-          bounds: {
-            minX,
-            minY,
-            maxX: minX + footprintW,
-            maxY: minY + footprintH
-          },
-          level
-        };
-        footprints.push(footprint);
+
+    features.forEach((feature, index) => {
+      if (!feature) return;
+      const rings = this._normaliseBuildingRings(feature);
+      if (rings.length === 0) return;
+
+      const path = new Path2D();
+      for (const ring of rings) {
+        if (!Array.isArray(ring) || ring.length < 3) continue;
+        path.moveTo(ring[0].x, ring[0].y);
+        for (let i = 1; i < ring.length; i++) {
+          path.lineTo(ring[i].x, ring[i].y);
+        }
+        path.closePath();
+      }
+
+      const bounds = this._computeBoundsFromRings(rings);
+      if (!bounds) return;
+
+      const buildingId = feature.id || `${node.id}:building:${index}`;
+      const properties = feature.properties && typeof feature.properties === 'object'
+        ? { ...feature.properties }
+        : null;
+      const metadata = {
+        id: buildingId,
+        featureId: feature.id ?? null,
+        level,
+        properties,
+        node: null
+      };
+      const proxy = {
+        id: buildingId,
+        nodeId: node.id,
+        path,
+        bounds,
+        level,
+        zoom: null,
+        metadata
+      };
+
+      footprints.push({
+        id: buildingId,
+        nodeId: node.id,
+        level,
+        path,
+        bounds,
+        featureId: feature.id ?? null,
+        properties,
+        metadata,
+        proxy
+      });
+    });
+
+    return footprints.length > 0 ? footprints : null;
+  }
+
+  _normaliseBuildingRings(feature) {
+    if (!feature) return [];
+    if (Array.isArray(feature.polygons)) {
+      return feature.polygons
+        .filter((ring) => Array.isArray(ring) && ring.length >= 3);
+    }
+    const primary = Array.isArray(feature.poly) ? feature.poly : Array.isArray(feature.polygon) ? feature.polygon : null;
+    if (Array.isArray(primary) && primary.length >= 3) {
+      return [primary];
+    }
+    return [];
+  }
+
+  _computeBoundsFromRings(rings) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const ring of rings) {
+      if (!Array.isArray(ring)) continue;
+      for (const point of ring) {
+        if (!point) continue;
+        const x = Number(point.x);
+        const y = Number(point.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
       }
     }
-    return footprints;
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+    return { minX, minY, maxX, maxY };
   }
 
   _renderBuildings(ctx, entry, view) {
@@ -372,14 +435,27 @@ export class DiamondRenderer {
       ctx.fill(footprint.path);
       ctx.stroke(footprint.path);
       ctx.restore();
-      this.hitProxies.set(footprint.id, {
+      const proxy = footprint.proxy || {
         id: footprint.id,
         nodeId: entry.id,
         path: footprint.path,
+        bounds: footprint.bounds,
         level: footprint.level,
-        zoom: view.zoom,
-        metadata: entry.metadata
-      });
+        metadata: footprint.metadata || null,
+        zoom: null
+      };
+      proxy.nodeId = entry.id;
+      proxy.path = footprint.path;
+      proxy.bounds = footprint.bounds;
+      proxy.level = footprint.level;
+      proxy.zoom = view.zoom;
+      if (proxy.metadata) {
+        proxy.metadata.properties = footprint.properties ?? proxy.metadata.properties ?? null;
+        proxy.metadata.featureId = footprint.featureId ?? proxy.metadata.featureId ?? null;
+        proxy.metadata.level = footprint.level ?? proxy.metadata.level ?? null;
+        proxy.metadata.node = entry.metadata || null;
+      }
+      this.hitProxies.set(footprint.id, proxy);
     }
   }
 
@@ -399,7 +475,32 @@ export class DiamondRenderer {
     const sprites = Array.isArray(payload.sprites) ? payload.sprites.join(',') : '[]';
     const effects = Array.isArray(payload.effects) ? payload.effects.join(',') : '[]';
     const stamp = node.metadata?.updatedAt ?? 0;
-    return `${terrain}|${vector}|${sprites}|${effects}|${stamp}`;
+    const buildingHash = this._hashBuildingPayload(payload.buildings);
+    return `${terrain}|${vector}|${sprites}|${effects}|${stamp}|${buildingHash}`;
+  }
+
+  _hashBuildingPayload(buildings) {
+    if (!Array.isArray(buildings) || buildings.length === 0) {
+      return '0';
+    }
+    const parts = [];
+    for (const feature of buildings) {
+      if (!feature) continue;
+      const rings = this._normaliseBuildingRings(feature);
+      const coordsKey = rings
+        .map((ring) => Array.isArray(ring)
+          ? ring.map((point) => `${Number(point.x)},${Number(point.y)}`).join(';')
+          : '')
+        .filter(Boolean)
+        .join('|');
+      const propsKey = feature.properties ? stableStringify(feature.properties) : '';
+      const idKey = feature.id || '';
+      parts.push(`${idKey}|${coordsKey}|${propsKey}`);
+    }
+    if (parts.length === 0) {
+      return '0';
+    }
+    return hashString(parts.join('||')).toString(16);
   }
 
   _computeDiamondVertices(bounds) {
