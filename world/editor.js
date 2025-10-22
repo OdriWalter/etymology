@@ -101,6 +101,28 @@ function cloneForType(feature, typeKey) {
   return cloneFeature(feature);
 }
 
+function cloneMetadata(metadata) {
+  if (!metadata || typeof metadata !== 'object') {
+    return null;
+  }
+  const result = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (Array.isArray(value)) {
+      result[key] = value.map((entry) => {
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          return { ...entry };
+        }
+        return entry;
+      });
+    } else if (value && typeof value === 'object') {
+      result[key] = { ...value };
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function emptySource() {
   return {
     terrainPatches: [],
@@ -117,6 +139,37 @@ function emptyEdits() {
     parcels: new Map(),
     buildings: new Map()
   };
+}
+
+function normaliseTagList(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+  return [];
+}
+
+function mapFromArray(features, typeKey, generateId) {
+  const map = new Map();
+  if (!Array.isArray(features)) {
+    return map;
+  }
+  for (const feature of features) {
+    const cloned = cloneForType(feature, typeKey);
+    if (!cloned) {
+      continue;
+    }
+    if (!cloned.id) {
+      cloned.id = generateId(typeKey);
+    }
+    map.set(cloned.id, cloned);
+  }
+  return map;
 }
 
 function cloneMapValues(map, typeKey) {
@@ -140,7 +193,9 @@ export class WorldEditor {
     if (!entry) {
       entry = {
         source: emptySource(),
-        edits: emptyEdits()
+        edits: emptyEdits(),
+        metadataSource: null,
+        metadataEdit: null
       };
       this.nodes.set(nodeId, entry);
     }
@@ -170,6 +225,26 @@ export class WorldEditor {
     return this.getCombinedPayload(nodeId);
   }
 
+  setMetadataSource(nodeId, metadata = null) {
+    const entry = this._ensureNode(nodeId);
+    entry.metadataSource = cloneMetadata(metadata);
+    if (!entry.metadataSource) {
+      entry.metadataSource = null;
+    }
+    if (!entry.metadataEdit && !this.hasEdits(nodeId) && !this._isSourceEmpty(entry.source)) {
+      return cloneMetadata(entry.metadataSource);
+    }
+    return cloneMetadata(entry.metadataSource);
+  }
+
+  getMetadataSource(nodeId) {
+    const entry = this.nodes.get(nodeId);
+    if (!entry || !entry.metadataSource) {
+      return null;
+    }
+    return cloneMetadata(entry.metadataSource);
+  }
+
   getSource(nodeId) {
     const entry = this.nodes.get(nodeId);
     if (!entry) {
@@ -181,6 +256,51 @@ export class WorldEditor {
       parcels: entry.source.parcels.map((feature) => cloneFeature(feature)),
       buildings: entry.source.buildings.map((feature) => cloneFeature(feature))
     };
+  }
+
+  getNodeMetadataEdit(nodeId) {
+    const entry = this.nodes.get(nodeId);
+    if (!entry || !entry.metadataEdit) {
+      return null;
+    }
+    return cloneMetadata(entry.metadataEdit);
+  }
+
+  updateNodeMetadata(nodeId, updates = {}) {
+    if (!nodeId || !updates || typeof updates !== 'object') {
+      return null;
+    }
+    const entry = this._ensureNode(nodeId);
+    const merged = { ...(entry.metadataEdit || {}) };
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        continue;
+      }
+      if (key === 'tags') {
+        const tags = normaliseTagList(value);
+        if (tags.length > 0 || Array.isArray(value)) {
+          merged.tags = tags;
+        } else if (merged.tags) {
+          merged.tags = [];
+        }
+        continue;
+      }
+      if (value === null || value === '') {
+        merged[key] = null;
+      } else if (Array.isArray(value)) {
+        merged[key] = value.slice();
+      } else if (value && typeof value === 'object') {
+        merged[key] = { ...value };
+      } else {
+        merged[key] = value;
+      }
+    }
+    if (Object.keys(merged).length === 0) {
+      entry.metadataEdit = null;
+    } else {
+      entry.metadataEdit = merged;
+    }
+    return this.getNodeMetadataEdit(nodeId);
   }
 
   addFeature(nodeId, type, feature) {
@@ -241,7 +361,8 @@ export class WorldEditor {
     if (!entry) {
       return false;
     }
-    return Object.values(entry.edits).some((collection) => collection instanceof Map && collection.size > 0);
+    const featureEdits = Object.values(entry.edits).some((collection) => collection instanceof Map && collection.size > 0);
+    return featureEdits || (entry.metadataEdit && Object.keys(entry.metadataEdit).length > 0);
   }
 
   clearEdits(nodeId) {
@@ -250,6 +371,7 @@ export class WorldEditor {
       return false;
     }
     entry.edits = emptyEdits();
+    entry.metadataEdit = null;
     if (!this.hasEdits(nodeId) && this._isSourceEmpty(entry.source)) {
       this.nodes.delete(nodeId);
     }
@@ -259,6 +381,33 @@ export class WorldEditor {
   clearAll() {
     this.nodes.clear();
     this._featureSeq = 1;
+  }
+
+  listEditedNodes() {
+    const summary = [];
+    for (const [nodeId, entry] of this.nodes.entries()) {
+      const terrainCount = entry.edits.terrainPatches?.size || 0;
+      const vectorCount = entry.edits.vector?.size || 0;
+      const parcelCount = entry.edits.parcels?.size || 0;
+      const buildingCount = entry.edits.buildings?.size || 0;
+      const metadataEdited = entry.metadataEdit ? Object.keys(entry.metadataEdit).length : 0;
+      const total = terrainCount + vectorCount + parcelCount + buildingCount + (metadataEdited ? 1 : 0);
+      if (total === 0) {
+        continue;
+      }
+      summary.push({
+        nodeId,
+        counts: {
+          terrainPatches: terrainCount,
+          vector: vectorCount,
+          parcels: parcelCount,
+          buildings: buildingCount,
+          metadata: metadataEdited ? 1 : 0
+        },
+        total
+      });
+    }
+    return summary;
   }
 
   getCombined(nodeId, type) {
@@ -294,6 +443,61 @@ export class WorldEditor {
     };
   }
 
+  serializePatches() {
+    const lines = [JSON.stringify({ type: 'editorPatch', version: 1 })];
+    for (const [nodeId, entry] of this.nodes.entries()) {
+      const terrain = cloneMapValues(entry.edits.terrainPatches, 'terrainPatches');
+      const vector = cloneMapValues(entry.edits.vector, 'vector');
+      const parcels = cloneMapValues(entry.edits.parcels, 'parcels');
+      const buildings = cloneMapValues(entry.edits.buildings, 'buildings');
+      const metadata = entry.metadataEdit ? cloneMetadata(entry.metadataEdit) : null;
+      const hasContent = terrain.length || vector.length || parcels.length || buildings.length || (metadata && Object.keys(metadata).length);
+      if (!hasContent) {
+        continue;
+      }
+      const record = {
+        type: 'node',
+        nodeId,
+        terrainPatches: terrain,
+        vector,
+        parcels,
+        buildings,
+        metadata
+      };
+      lines.push(JSON.stringify(record));
+    }
+    return lines.join('\n');
+  }
+
+  importPatches(serialized) {
+    const records = typeof serialized === 'string'
+      ? serialized.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line))
+      : Array.isArray(serialized)
+        ? serialized
+        : [];
+    if (!records.length) {
+      return [];
+    }
+    const [header, ...rest] = records;
+    if (header.type !== 'editorPatch') {
+      throw new Error('Invalid patch header');
+    }
+    const touched = new Set();
+    for (const record of rest) {
+      if (!record || record.type !== 'node' || !record.nodeId) {
+        continue;
+      }
+      const entry = this._ensureNode(record.nodeId);
+      entry.edits.terrainPatches = mapFromArray(record.terrainPatches, 'terrainPatches', (typeKey) => this._generateFeatureId(typeKey));
+      entry.edits.vector = mapFromArray(record.vector, 'vector', (typeKey) => this._generateFeatureId(typeKey));
+      entry.edits.parcels = mapFromArray(record.parcels, 'parcels', (typeKey) => this._generateFeatureId(typeKey));
+      entry.edits.buildings = mapFromArray(record.buildings, 'buildings', (typeKey) => this._generateFeatureId(typeKey));
+      entry.metadataEdit = record.metadata ? cloneMetadata(record.metadata) : null;
+      touched.add(record.nodeId);
+    }
+    return Array.from(touched);
+  }
+
   _mergeFeature(existing, updates, typeKey) {
     const base = cloneForType(existing, typeKey) || {};
     if (!updates || typeof updates !== 'object') {
@@ -317,7 +521,8 @@ export class WorldEditor {
 
   _isEntryEmpty(entry) {
     const noEdits = Object.values(entry.edits).every((collection) => collection instanceof Map && collection.size === 0);
-    return noEdits && this._isSourceEmpty(entry.source);
+    const noMetadata = !entry.metadataEdit || Object.keys(entry.metadataEdit).length === 0;
+    return noEdits && noMetadata && this._isSourceEmpty(entry.source);
   }
 
   _isSourceEmpty(source) {

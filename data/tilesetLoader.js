@@ -230,6 +230,9 @@ export class TilesetLoader {
       proceduralSeed: tile.proceduralSeed || this._tileSeed(tile.lod, tile.x, tile.y)
     };
     this.quadtree.setMetadata(node.id, metadata);
+    if (this.editor) {
+      this.editor.setMetadataSource(node.id, metadata);
+    }
   }
 
   _randomTerrainKey(tile) {

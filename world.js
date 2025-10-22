@@ -84,6 +84,13 @@ function cloneTerrainPatch(patch) {
   return cloned;
 }
 
+function cloneTerrainPatchArray(patches) {
+  if (!Array.isArray(patches)) {
+    return [];
+  }
+  return patches.map((patch) => cloneTerrainPatch(patch)).filter(Boolean);
+}
+
 function pointWithinBounds(bounds, point) {
   return {
     x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
@@ -449,6 +456,87 @@ export class World {
     return this._removeNodeFeature('buildings', nodeId, featureId);
   }
 
+  clearNodeEdits(nodeId) {
+    if (!this.editor || !nodeId) {
+      return false;
+    }
+    const cleared = this.editor.clearEdits(nodeId);
+    if (cleared) {
+      this._syncEditorPayload(nodeId);
+    }
+    return cleared;
+  }
+
+  getEditorSummary() {
+    if (!this.editor) {
+      return [];
+    }
+    return this.editor.listEditedNodes();
+  }
+
+  hasUnsavedEdits(nodeId = null) {
+    if (!this.editor) {
+      return false;
+    }
+    if (nodeId) {
+      return this.editor.hasEdits(nodeId);
+    }
+    const summary = this.editor.listEditedNodes();
+    return summary.length > 0;
+  }
+
+  exportEditorPatch() {
+    if (!this.editor) {
+      return '';
+    }
+    return this.editor.serializePatches();
+  }
+
+  applyEditorPatch(serialized) {
+    if (!this.editor) {
+      return [];
+    }
+    const touchedNodes = this.editor.importPatches(serialized);
+    for (const nodeId of touchedNodes) {
+      this._syncEditorPayload(nodeId);
+    }
+    return touchedNodes;
+  }
+
+  updateNodeMetadata(nodeId, updates = {}) {
+    if (!nodeId) {
+      return null;
+    }
+    const node = this.terrain.getNode(nodeId);
+    if (!node) {
+      return null;
+    }
+    let metadataEdit = null;
+    if (this.editor) {
+      metadataEdit = this.editor.updateNodeMetadata(nodeId, updates);
+    }
+    const baseMetadata = this.editor?.getMetadataSource(nodeId) || node.metadata || {};
+    const merged = { ...baseMetadata };
+    if (metadataEdit) {
+      for (const [key, value] of Object.entries(metadataEdit)) {
+        if (key === 'tags') {
+          merged.tags = Array.isArray(value) ? [...value] : [];
+        } else if (value === null) {
+          merged[key] = null;
+        } else if (Array.isArray(value)) {
+          merged[key] = [...value];
+        } else if (value && typeof value === 'object') {
+          merged[key] = { ...value };
+        } else {
+          merged[key] = value;
+        }
+      }
+    }
+    this.terrain.setMetadata(nodeId, merged);
+    this._flagNodeEdited(nodeId);
+    return merged;
+  }
+
   consumeEditedNodes() {
     const edited = Array.from(this._editedNodes);
     this._editedNodes.clear();
@@ -527,6 +615,28 @@ export class World {
       layers.terrain = terrainLayer;
       node.metadata.layers = layers;
     });
+    const metadataSource = this.editor.getMetadataSource(nodeId);
+    const metadataEdit = this.editor.getNodeMetadataEdit(nodeId);
+    if (metadataSource || metadataEdit) {
+      const base = metadataSource || this.terrain.getNode(nodeId)?.metadata || {};
+      const merged = { ...base };
+      if (metadataEdit) {
+        for (const [key, value] of Object.entries(metadataEdit)) {
+          if (key === 'tags') {
+            merged.tags = Array.isArray(value) ? [...value] : [];
+          } else if (value === null) {
+            merged[key] = null;
+          } else if (Array.isArray(value)) {
+            merged[key] = [...value];
+          } else if (value && typeof value === 'object') {
+            merged[key] = { ...value };
+          } else {
+            merged[key] = value;
+          }
+        }
+      }
+      this.terrain.setMetadata(nodeId, merged);
+    }
     this._flagNodeEdited(nodeId);
     return combined;
   }
@@ -597,6 +707,20 @@ export class World {
       this.editor.clearAll();
     }
     this._editedNodes.clear();
+
+    if (this.editor) {
+      for (const node of this.terrain.nodes.values()) {
+        if (!node) continue;
+        const payload = {
+          terrainPatches: cloneTerrainPatchArray(node.payloadRefs?.terrainPatches),
+          vector: Array.isArray(node.payloadRefs?.vector) ? node.payloadRefs.vector.map(cloneFeature) : [],
+          parcels: Array.isArray(node.payloadRefs?.parcels) ? node.payloadRefs.parcels.map(cloneFeature) : [],
+          buildings: Array.isArray(node.payloadRefs?.buildings) ? node.payloadRefs.buildings.map(cloneFeature) : []
+        };
+        this.editor.setSource(node.id, payload);
+        this.editor.setMetadataSource(node.id, node.metadata);
+      }
+    }
 
     this.layers.vector.features = Array.isArray(worldRecord.vectorFeatures)
       ? worldRecord.vectorFeatures.map(cloneFeature).filter(Boolean)
