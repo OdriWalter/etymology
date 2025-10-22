@@ -4,84 +4,242 @@ html, body {
   overflow: hidden;
   height: 100%;
   width: 100%;
-  font-family: sans-serif;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  background: #f6f1e4;
+  color: #2f2618;
 }
 
-#ui {
+#canvas {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  background: rgba(255, 255, 255, 0.85);
-  padding: 8px;
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  z-index: 10;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-#modeControls button,
-#transportControls button,
-#seedControls button {
+.ui-panels {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 280px;
+  z-index: 20;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 14px 14px;
+  background: rgba(255, 252, 244, 0.92);
+  border-radius: 10px;
+  box-shadow: 0 8px 18px rgba(31, 20, 6, 0.2);
+  backdrop-filter: blur(6px);
+}
+
+.panel header {
   margin: 0;
-  padding: 4px 8px;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b5130;
+}
+
+button {
   cursor: pointer;
   border: none;
-  background: #f0efe9;
-  border-radius: 4px;
-  transition: background 0.2s ease;
+  border-radius: 6px;
+  background: #efe5d3;
+  color: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  transition: background 0.2s ease, transform 0.1s ease;
 }
 
-#modeControls button.active {
-  background: #d1d9ff;
+button:hover {
+  background: #e4d5b9;
 }
 
-#modeControls button:hover,
-#transportControls button:hover,
-#seedControls button:hover {
-  background: #e0dfd7;
+button:active {
+  transform: translateY(1px);
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#searchInput {
+  flex: 1 1 auto;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(124, 94, 52, 0.35);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+#searchInput:focus {
+  outline: 2px solid rgba(153, 118, 73, 0.6);
+  outline-offset: 1px;
+}
+
+#searchClear {
+  width: 32px;
+  min-width: 32px;
+  padding: 6px 0;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(239, 215, 176, 0.8);
+}
+
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(124, 94, 52, 0.2);
+}
+
+.search-results li + li {
+  border-top: 1px solid rgba(124, 94, 52, 0.15);
+}
+
+.search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: transparent;
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: 0;
+  font-size: 13px;
+}
+
+.search-result:hover {
+  background: rgba(239, 213, 172, 0.35);
+}
+
+.search-result .subtitle {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #7a6853;
+}
+
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.layer-toggle input {
+  accent-color: #b68b4c;
+}
+
+.panel-subtext {
+  font-size: 11px;
+  color: #7a6853;
+  margin-top: 4px;
+}
+
+.context-row {
+  font-size: 12px;
+  color: #4a3b29;
+}
+
+.context-row.heading {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6b5130;
+}
+
+.context-divider {
+  height: 1px;
+  background: rgba(123, 101, 71, 0.25);
+  margin: 2px 0 4px;
+}
+
+.attribute-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.attribute-list dt {
+  font-weight: 600;
+  color: #6b5130;
+  text-transform: uppercase;
+}
+
+.attribute-list dd {
+  margin: 0;
+  color: #3f3222;
+}
+
+.attribute-list.empty::before {
+  content: '—';
+  grid-column: 1 / -1;
+  color: #7a6853;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mode-toggle button {
+  flex: 1 1 auto;
+  font-size: 12px;
+  padding: 6px 0;
+  background: rgba(239, 229, 211, 0.7);
+}
+
+.mode-toggle button.active {
+  background: #d7c39b;
+  font-weight: 600;
 }
 
 .control-group {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 6px;
-  align-items: center;
+  margin-top: 6px;
 }
 
-#seedControls label {
-  font-size: 12px;
+#tileStatus[data-state="loading"] {
+  color: #b06312;
   font-weight: 600;
 }
 
-#seedControls input {
-  width: 120px;
-  padding: 2px 4px;
-  font-size: 12px;
+.overlay-panel {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  max-width: 400px;
+  padding: 12px 16px;
+  background: rgba(255, 252, 244, 0.9);
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(31, 20, 6, 0.18);
+  font-size: 13px;
+  color: #42321f;
+  z-index: 15;
 }
 
-.info-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.info-row {
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.hint {
-  font-size: 11px;
-  color: #555;
-  margin-top: 8px;
-  max-width: 220px;
-}
-
-#canvas {
+#breadcrumbsTrail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: block;
-  width: 100%;
-  height: 100%;
 }

@@ -6,35 +6,55 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="ui">
-    <div id="modeControls" class="control-group">
-      <button data-mode="navigate">Navigate</button>
-      <button data-mode="measure">Measure</button>
-      <button data-mode="metadata">Metadata</button>
-      <button data-mode="layers">Layers</button>
-    </div>
-    <div id="layerStatus" class="info-row">Layers · terrain:on · vector:on · sprite:on · effect:on</div>
-    <div id="infoPanel" class="info-panel">
-      <div id="hoverInfo">Hover · —</div>
-      <div id="selectionInfo">Selection · —</div>
-      <div id="measurementInfo">Measurement · 0</div>
-    </div>
-    <div id="seedControls" class="control-group">
-      <label for="seedInput">Seed</label>
-      <input type="text" id="seedInput" />
-      <button id="applySeed">Apply</button>
-      <button id="randomSeed">Random</button>
-    </div>
-    <div id="transportControls" class="control-group">
-      <button id="playPause">Play</button>
-      <button id="saveBtn">Save</button>
-      <input type="file" id="loadInput" style="display:none;" accept=".ndjson,.json,.txt">
-      <button id="loadBtn">Load</button>
-    </div>
-    <div id="modeHint" class="hint">Tip: use modifier keys while navigating — Shift expands, Alt collapses quadtree nodes.</div>
+  <div id="ui" class="ui-panels">
+    <section id="searchPanel" class="panel">
+      <header>Search</header>
+      <div class="search-row">
+        <input type="search" id="searchInput" placeholder="Search settlements, parcels, or tiles" aria-label="Search world" />
+        <button id="searchClear" aria-label="Clear search" title="Clear search">×</button>
+      </div>
+      <ul id="searchResults" class="search-results" aria-label="Search results"></ul>
+    </section>
+
+    <section id="layersPanel" class="panel">
+      <header>Layers</header>
+      <label class="layer-toggle"><input type="checkbox" data-layer-toggle="terrain" checked /> Terrain</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer-toggle="vector" checked /> Vector</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer-toggle="sprite" checked /> Sprites</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer-toggle="effect" checked /> Effects</label>
+      <div id="layerSummary" class="panel-subtext">terrain:on · vector:on · sprite:on · effect:on</div>
+    </section>
+
+    <section id="contextPanel" class="panel">
+      <header>Context</header>
+      <div id="quadtreeDepth" class="context-row">Depth · 0 / 0</div>
+      <div id="tileStatus" class="context-row">Tiles · idle</div>
+      <div id="hoverSummary" class="context-row">Hover · —</div>
+      <div id="selectionSummary" class="context-row">Selection · —</div>
+      <div id="measurementInfo" class="context-row">Measurement · 0</div>
+      <div class="context-divider"></div>
+      <div class="context-row heading">Selected attributes</div>
+      <dl id="selectedAttributes" class="attribute-list"></dl>
+      <div class="context-divider"></div>
+      <div id="modeControls" class="mode-toggle" role="group" aria-label="Interaction mode">
+        <button data-mode="navigate" class="active">Navigate</button>
+        <button data-mode="measure">Measure</button>
+        <button data-mode="metadata">Metadata</button>
+      </div>
+      <div id="transportControls" class="control-group">
+        <button id="playPause">Play</button>
+        <button id="saveBtn">Save</button>
+        <input type="file" id="loadInput" style="display:none;" accept=".ndjson,.json,.txt">
+        <button id="loadBtn">Load</button>
+      </div>
+    </section>
   </div>
+
+  <div id="breadcrumbsOverlay" class="overlay-panel">
+    <span id="breadcrumbsTrail">World overview</span>
+  </div>
+
   <canvas id="canvas"></canvas>
-  <!-- Module entry point initialises the quadtree world engine -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>
