@@ -73,6 +73,46 @@ function buildPathFromVertices(vertices) {
   return path;
 }
 
+function buildPathFromRings(rings) {
+  const path = new Path2D();
+  if (!Array.isArray(rings)) {
+    return path;
+  }
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || ring.length === 0) continue;
+    path.moveTo(ring[0].x, ring[0].y);
+    for (let i = 1; i < ring.length; i++) {
+      path.lineTo(ring[i].x, ring[i].y);
+    }
+    path.closePath();
+  }
+  return path;
+}
+
+function computeBoundsFromPoints(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return null;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    if (!point) continue;
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return null;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 function stableStringify(value) {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
@@ -186,6 +226,9 @@ export class DiamondRenderer {
       if (entry.buildingFootprints && this._shouldRenderBuildings(node, view.zoom)) {
         this._renderBuildings(ctx, entry, view);
       }
+
+      this._registerTerrainProxies(node, view);
+      this._registerVectorProxies(node, view);
     }
     this.purgeInvisibleEntries();
   }
@@ -261,10 +304,23 @@ export class DiamondRenderer {
   }
 
   pickBuildingAt(worldX, worldY) {
+    return this.pickProxyAt(worldX, worldY, (proxy) => proxy.type === 'building');
+  }
+
+  pickProxyAt(worldX, worldY, filter) {
     if (!this._hitTestContext) return null;
+    const ctx = this._hitTestContext;
     for (const proxy of this.hitProxies.values()) {
-      if (!proxy.path || !(proxy.path instanceof Path2D)) continue;
-      if (this._hitTestContext.isPointInPath(proxy.path, worldX, worldY)) {
+      if (!proxy || !proxy.path || !(proxy.path instanceof Path2D)) continue;
+      if (typeof filter === 'function' && !filter(proxy)) continue;
+      if (proxy.kind === 'polyline') {
+        if (proxy.strokeWidth && Number.isFinite(proxy.strokeWidth)) {
+          ctx.lineWidth = proxy.strokeWidth;
+        }
+        if (ctx.isPointInStroke && ctx.isPointInStroke(proxy.path, worldX, worldY)) {
+          return proxy;
+        }
+      } else if (ctx.isPointInPath(proxy.path, worldX, worldY)) {
         return proxy;
       }
     }
@@ -457,6 +513,10 @@ export class DiamondRenderer {
       proxy.bounds = footprint.bounds;
       proxy.level = footprint.level;
       proxy.zoom = view.zoom;
+      proxy.type = 'building';
+      proxy.featureType = 'buildings';
+      proxy.featureId = footprint.featureId ?? footprint.id;
+      proxy.kind = 'polygon';
       if (proxy.metadata) {
         proxy.metadata.properties = footprint.properties ?? proxy.metadata.properties ?? null;
         proxy.metadata.featureId = footprint.featureId ?? proxy.metadata.featureId ?? null;
@@ -465,6 +525,126 @@ export class DiamondRenderer {
       }
       this.hitProxies.set(footprint.id, proxy);
     }
+  }
+
+  _registerTerrainProxies(node, view) {
+    const patches = node?.payloadRefs?.terrainPatches;
+    if (!Array.isArray(patches) || patches.length === 0) {
+      return;
+    }
+    patches.forEach((patch, index) => {
+      if (!patch) return;
+      const rings = [];
+      if (Array.isArray(patch.polygon) && patch.polygon.length >= 3) {
+        rings.push(patch.polygon);
+      }
+      if (Array.isArray(patch.polygons)) {
+        for (const ring of patch.polygons) {
+          if (Array.isArray(ring) && ring.length >= 3) {
+            rings.push(ring);
+          }
+        }
+      }
+      if (rings.length === 0) return;
+      const path = buildPathFromRings(rings);
+      const bounds = this._computeBoundsFromRings(rings);
+      const patchId = patch.id || `${node.id}:terrain:${index}`;
+      const key = `terrain:${patchId}`;
+      const metadata = patch.metadata ? { ...patch.metadata } : {};
+      if (patch.properties && typeof patch.properties === 'object') {
+        metadata.properties = { ...patch.properties };
+      }
+      metadata.featureId = patch.id ?? patchId;
+      metadata.nodeId = node.id;
+      metadata.featureIndex = index;
+      const proxy = {
+        id: key,
+        featureId: patch.id ?? patchId,
+        type: 'terrain',
+        featureType: 'terrain',
+        nodeId: node.id,
+        path,
+        bounds,
+        kind: 'polygon',
+        metadata,
+        zoom: view?.zoom ?? null
+      };
+      this.hitProxies.set(key, proxy);
+    });
+  }
+
+  _registerVectorProxies(node, view) {
+    const features = node?.payloadRefs?.vector;
+    if (!Array.isArray(features) || features.length === 0) {
+      return;
+    }
+    features.forEach((feature, index) => {
+      if (!feature) return;
+      let rings = [];
+      let kind = 'polyline';
+      if (Array.isArray(feature.polygons) && feature.polygons.length > 0) {
+        rings = feature.polygons.filter((ring) => Array.isArray(ring) && ring.length >= 3);
+        kind = 'polygon';
+      } else if (Array.isArray(feature.polygon) && feature.polygon.length >= 3) {
+        rings = [feature.polygon];
+        kind = 'polygon';
+      } else if (Array.isArray(feature.poly) && feature.poly.length >= 3) {
+        rings = [feature.poly];
+        kind = 'polygon';
+      }
+
+      let path;
+      let bounds = null;
+      if (kind === 'polygon' && rings.length > 0) {
+        path = buildPathFromRings(rings);
+        bounds = this._computeBoundsFromRings(rings);
+      } else {
+        const points = Array.isArray(feature.line)
+          ? feature.line
+          : Array.isArray(feature.path)
+            ? feature.path
+            : Array.isArray(feature.points)
+              ? feature.points
+              : [];
+        if (!Array.isArray(points) || points.length < 2) {
+          return;
+        }
+        const vectorPath = new Path2D();
+        vectorPath.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          vectorPath.lineTo(points[i].x, points[i].y);
+        }
+        path = vectorPath;
+        bounds = computeBoundsFromPoints(points);
+        kind = 'polyline';
+      }
+
+      if (!path) {
+        return;
+      }
+
+      const strokeWidth = feature.style?.lineWidth || 2;
+      const featureId = feature.id || `${node.id}:vector:${index}`;
+      const key = `vector:${featureId}`;
+      const metadata = feature.properties ? { properties: { ...feature.properties } } : {};
+      metadata.featureId = feature.id ?? featureId;
+      metadata.nodeId = node.id;
+      metadata.featureIndex = index;
+      const proxy = {
+        id: key,
+        featureId,
+        type: 'vector',
+        featureType: 'vector',
+        nodeId: node.id,
+        path,
+        bounds,
+        kind,
+        strokeWidth,
+        metadata,
+        zoom: view?.zoom ?? null
+      };
+      this.hitProxies.set(key, proxy);
+    });
   }
 
   _shouldRenderBuildings(node, zoom) {
