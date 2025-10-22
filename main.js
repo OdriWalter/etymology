@@ -36,6 +36,34 @@ function formatDistance(detail) {
   return `${detail.distance.toFixed(1)} m`;
 }
 
+function parseTagsInput(value) {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function formatTags(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return '';
+  }
+  return tags.join(', ');
+}
+
+function parseInteger(value) {
+  if (value === '' || value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
 function parseLineageEntry(entry) {
   if (!entry || typeof entry !== 'string') {
     return { level: null, name: null };
@@ -184,6 +212,21 @@ async function init() {
   const saveBtn = document.getElementById('saveBtn');
   const loadBtn = document.getElementById('loadBtn');
   const loadInput = document.getElementById('loadInput');
+  const authoringPanel = document.getElementById('authoringPanel');
+  const authoringStatusText = document.getElementById('authoringStatusText');
+  const unsavedIndicator = document.getElementById('unsavedIndicator');
+  const authoringModeButtons = document.querySelectorAll('#authoringModeControls [data-mode]');
+  const authoringForm = document.getElementById('authoringForm');
+  const authorNameInput = document.getElementById('authorName');
+  const authorLandUseInput = document.getElementById('authorLandUse');
+  const authorStoreysInput = document.getElementById('authorStoreys');
+  const authorTagsInput = document.getElementById('authorTags');
+  const authorApplyBtn = document.getElementById('authorApply');
+  const authorDiscardBtn = document.getElementById('authorDiscard');
+  const authorError = document.getElementById('authoringError');
+  const authorEditsList = document.getElementById('authoringEdits');
+  const subdivideBtn = document.getElementById('subdivideSelected');
+  const clearNodeEditsBtn = document.getElementById('clearNodeEdits');
 
   if (!canvas) {
     throw new Error('Canvas element missing');
@@ -215,6 +258,361 @@ async function init() {
 
     const quadtree = world.getTerrainLayer().quadtree;
     let searchIndex = buildSearchIndex(quadtree);
+    const authoringState = { target: null, dirty: false };
+
+    function setAuthoringError(message) {
+      if (!authorError) return;
+      authorError.textContent = message || '';
+      authorError.hidden = !message;
+    }
+
+    function clearAuthoringError() {
+      setAuthoringError('');
+    }
+
+    function updateUnsavedIndicator() {
+      if (!unsavedIndicator) return;
+      const hasEdits = world.hasUnsavedEdits();
+      unsavedIndicator.hidden = !hasEdits;
+      unsavedIndicator.setAttribute('aria-hidden', hasEdits ? 'false' : 'true');
+    }
+
+    function renderEditsSummary() {
+      if (!authorEditsList) return;
+      authorEditsList.innerHTML = '';
+      const summary = world.getEditorSummary();
+      if (!summary.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty';
+        empty.textContent = 'No pending edits';
+        authorEditsList.appendChild(empty);
+        return;
+      }
+      summary.sort((a, b) => b.total - a.total);
+      for (const entry of summary) {
+        const parts = [];
+        if (entry.counts.terrainPatches) {
+          parts.push(`terrain ×${entry.counts.terrainPatches}`);
+        }
+        if (entry.counts.vector) {
+          parts.push(`vector ×${entry.counts.vector}`);
+        }
+        if (entry.counts.parcels) {
+          parts.push(`parcels ×${entry.counts.parcels}`);
+        }
+        if (entry.counts.buildings) {
+          parts.push(`buildings ×${entry.counts.buildings}`);
+        }
+        if (entry.counts.metadata) {
+          parts.push('metadata');
+        }
+        const item = document.createElement('li');
+        item.textContent = `${entry.nodeId}: ${parts.join(', ')}`;
+        authorEditsList.appendChild(item);
+      }
+    }
+
+    function refreshAuthoringSummary() {
+      updateUnsavedIndicator();
+      renderEditsSummary();
+      if (authoringState.target && clearNodeEditsBtn) {
+        clearNodeEditsBtn.disabled = !world.hasUnsavedEdits(authoringState.target.nodeId);
+      }
+    }
+
+    function enableAuthoringForm(enabled) {
+      const disable = !enabled;
+      [authorNameInput, authorLandUseInput, authorStoreysInput, authorTagsInput].forEach((input) => {
+        if (input) {
+          input.disabled = disable;
+        }
+      });
+      if (authorApplyBtn) {
+        authorApplyBtn.disabled = true;
+      }
+      if (authorDiscardBtn) {
+        authorDiscardBtn.disabled = disable;
+      }
+    }
+
+    function updateAuthoringButtons() {
+      if (authorApplyBtn) {
+        authorApplyBtn.disabled = !(authoringState.target && authoringState.dirty);
+      }
+      if (authorDiscardBtn) {
+        authorDiscardBtn.disabled = !authoringState.target;
+      }
+      if (clearNodeEditsBtn) {
+        if (authoringState.target?.nodeId) {
+          clearNodeEditsBtn.disabled = !world.hasUnsavedEdits(authoringState.target.nodeId);
+        } else {
+          clearNodeEditsBtn.disabled = true;
+        }
+      }
+    }
+
+    function resetAuthoringForm() {
+      authoringState.target = null;
+      authoringState.dirty = false;
+      if (authorNameInput) authorNameInput.value = '';
+      if (authorLandUseInput) authorLandUseInput.value = '';
+      if (authorStoreysInput) authorStoreysInput.value = '';
+      if (authorTagsInput) authorTagsInput.value = '';
+      if (authoringStatusText) {
+        authoringStatusText.textContent = 'No selection';
+      }
+      if (subdivideBtn) {
+        subdivideBtn.disabled = true;
+      }
+      clearAuthoringError();
+      enableAuthoringForm(false);
+      updateAuthoringButtons();
+    }
+
+    resetAuthoringForm();
+    refreshAuthoringSummary();
+
+    function gatherFormValues() {
+      if (!authoringState.target) {
+        return null;
+      }
+      const name = authorNameInput?.value.trim() || '';
+      const landUse = authorLandUseInput?.value.trim() || '';
+      const storeysValue = authorStoreysInput?.value.trim() || '';
+      const tags = parseTagsInput(authorTagsInput?.value || '');
+      let storeys = null;
+      if (storeysValue) {
+        const parsed = parseInteger(storeysValue);
+        if (parsed === null || parsed < 0) {
+          setAuthoringError('Storeys must be a non-negative integer.');
+          return null;
+        }
+        storeys = parsed;
+      }
+      clearAuthoringError();
+      return {
+        name,
+        landUse,
+        storeys,
+        tags
+      };
+    }
+
+    function populateAuthoring(detail) {
+      if (!authoringPanel) return;
+      if (!detail || (!detail.building && !detail.node)) {
+        resetAuthoringForm();
+        return;
+      }
+      clearAuthoringError();
+      enableAuthoringForm(true);
+      let nodeId = detail.node?.id || detail.building?.nodeId || null;
+      let statusLabel = '';
+      if (detail.building) {
+        const featureId = detail.building.metadata?.featureId || detail.building.id;
+        const combined = nodeId && featureId
+          ? (world.editor?.getCombined(nodeId, 'buildings') || []).find((feature) => feature && feature.id === featureId)
+          : null;
+        const fallbackProps = detail.building.metadata?.properties || {};
+        const source = combined || detail.building.metadata || {};
+        const props = { ...(combined?.properties || fallbackProps) };
+        const metadata = combined?.metadata || detail.building.metadata || {};
+        if (authorNameInput) {
+          authorNameInput.value = metadata.name || combined?.name || detail.building.metadata?.name || detail.building.id || '';
+        }
+        if (authorLandUseInput) {
+          authorLandUseInput.value = props.landUse || '';
+        }
+        if (authorStoreysInput) {
+          authorStoreysInput.value = Number.isFinite(props.storeys) ? String(props.storeys) : '';
+        }
+        if (authorTagsInput) {
+          authorTagsInput.value = formatTags(metadata.tags || []);
+        }
+        statusLabel = `Building · ${detail.building.id || featureId}`;
+        authoringState.target = {
+          kind: 'building',
+          nodeId,
+          featureId,
+          featureType: 'buildings',
+          data: combined || source
+        };
+      } else if (detail.node) {
+        const node = quadtree.getNode(detail.node.id);
+        const metadata = node?.metadata || detail.node.metadata || {};
+        if (authorNameInput) {
+          authorNameInput.value = metadata.name || '';
+        }
+        if (authorLandUseInput) {
+          authorLandUseInput.value = metadata.landUse || '';
+        }
+        if (authorStoreysInput) {
+          authorStoreysInput.value = Number.isFinite(metadata.storeys) ? String(metadata.storeys) : '';
+        }
+        if (authorTagsInput) {
+          authorTagsInput.value = formatTags(metadata.tags || []);
+        }
+        statusLabel = `Node · ${detail.node.id}`;
+        authoringState.target = {
+          kind: 'node',
+          nodeId: detail.node.id,
+          data: metadata
+        };
+      }
+      authoringState.dirty = false;
+      if (authoringStatusText) {
+        authoringStatusText.textContent = statusLabel || 'Authoring';
+      }
+      if (subdivideBtn) {
+        subdivideBtn.disabled = !nodeId;
+      }
+      updateAuthoringButtons();
+    }
+
+    function refreshCurrentSelection() {
+      if (!currentSelection) return;
+      if (currentSelection.node?.id) {
+        const node = quadtree.getNode(currentSelection.node.id);
+        if (node) {
+          currentSelection.node.metadata = node.metadata ? { ...node.metadata } : null;
+        }
+      }
+      if (currentSelection.building?.nodeId && currentSelection.building.metadata?.featureId) {
+        const features = world.editor?.getCombined(currentSelection.building.nodeId, 'buildings') || [];
+        const feature = features.find((entry) => entry && entry.id === currentSelection.building.metadata.featureId);
+        if (feature) {
+          currentSelection.building.metadata = {
+            ...(currentSelection.building.metadata || {}),
+            properties: feature.properties ? { ...feature.properties } : {},
+            name: feature.name || feature.metadata?.name || currentSelection.building.metadata?.name || null,
+            tags: feature.metadata?.tags ? [...feature.metadata.tags] : []
+          };
+        }
+      }
+      updateSelection(currentSelection);
+    }
+
+    function handleApply() {
+      if (!authoringState.target) return;
+      const values = gatherFormValues();
+      if (!values) return;
+      if (authoringState.target.kind === 'building' && authoringState.target.nodeId && authoringState.target.featureId) {
+        const features = world.editor?.getCombined(authoringState.target.nodeId, 'buildings') || [];
+        const current = features.find((feature) => feature && feature.id === authoringState.target.featureId) || authoringState.target.data || {};
+        const properties = { ...(current.properties || {}) };
+        if (values.name) {
+          properties.name = values.name;
+        } else {
+          delete properties.name;
+        }
+        if (values.landUse) {
+          properties.landUse = values.landUse;
+        } else {
+          delete properties.landUse;
+        }
+        if (values.storeys !== null) {
+          properties.storeys = values.storeys;
+        } else {
+          delete properties.storeys;
+        }
+        const metadata = { ...(current.metadata || {}) };
+        if (values.name) {
+          metadata.name = values.name;
+        } else {
+          delete metadata.name;
+        }
+        metadata.tags = values.tags;
+        const updates = {
+          properties,
+          metadata
+        };
+        if (values.name || current.name) {
+          updates.name = values.name || null;
+        }
+        world.updateBuildingFeature(authoringState.target.nodeId, authoringState.target.featureId, updates);
+      } else if (authoringState.target.kind === 'node' && authoringState.target.nodeId) {
+        const updates = {};
+        updates.name = values.name || null;
+        updates.landUse = values.landUse || null;
+        updates.storeys = values.storeys !== null ? values.storeys : null;
+        updates.tags = values.tags;
+        world.updateNodeMetadata(authoringState.target.nodeId, updates);
+      }
+      authoringState.dirty = false;
+      refreshCurrentSelection();
+      populateAuthoring(currentSelection);
+      refreshAuthoringSummary();
+    }
+
+    function handleDiscard() {
+      if (!authoringState.target) return;
+      populateAuthoring(currentSelection);
+      authoringState.dirty = false;
+      clearAuthoringError();
+      updateAuthoringButtons();
+    }
+
+    if (authoringForm) {
+      authoringForm.addEventListener('input', () => {
+        if (!authoringState.target) return;
+        authoringState.dirty = true;
+        updateAuthoringButtons();
+        clearAuthoringError();
+      });
+      authoringForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        handleApply();
+      });
+    }
+
+    if (authorApplyBtn) {
+      authorApplyBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        handleApply();
+      });
+    }
+
+    if (authorDiscardBtn) {
+      authorDiscardBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        handleDiscard();
+      });
+    }
+
+    if (subdivideBtn) {
+      subdivideBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        const nodeId = currentSelection?.node?.id || authoringState.target?.nodeId || null;
+        if (!nodeId) return;
+        const children = world.subdivideNode(nodeId) || [];
+        if (children.length && tilesetLoader) {
+          for (const child of children) {
+            const position = child?.metadata?.position;
+            if (position && Number.isInteger(position.lod) && Number.isInteger(position.x) && Number.isInteger(position.y)) {
+              try {
+                await tilesetLoader.ensureTile(position.lod, position.x, position.y);
+              } catch (err) {
+                console.warn('Failed to hydrate subdivided child', err);
+              }
+            }
+          }
+          searchIndex = buildSearchIndex(quadtree);
+        }
+        refreshAuthoringSummary();
+      });
+    }
+
+    if (clearNodeEditsBtn) {
+      clearNodeEditsBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        const nodeId = authoringState.target?.nodeId || currentSelection?.node?.id || null;
+        if (!nodeId) return;
+        world.clearNodeEdits(nodeId);
+        refreshCurrentSelection();
+        populateAuthoring(currentSelection);
+        refreshAuthoringSummary();
+      });
+    }
 
     function refreshLayerSummary() {
       if (!layerSummary) return;
@@ -368,6 +766,24 @@ async function init() {
     controller.on('selection', ({ detail }) => {
       currentSelection = detail;
       updateSelection(detail);
+      populateAuthoring(detail);
+      updateAuthoringButtons();
+    });
+
+    controller.on('feature-created', () => {
+      refreshCurrentSelection();
+      populateAuthoring(currentSelection);
+      refreshAuthoringSummary();
+    });
+
+    controller.on('feature-updated', () => {
+      refreshCurrentSelection();
+      populateAuthoring(currentSelection);
+      refreshAuthoringSummary();
+    });
+
+    controller.on('feature-cancelled', () => {
+      refreshAuthoringSummary();
     });
 
     controller.on('measurement-update', ({ detail }) => {
@@ -389,8 +805,20 @@ async function init() {
       });
     });
 
+    authoringModeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        controller.setMode(button.dataset.mode);
+      });
+    });
+    authoringModeButtons.forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === controller.mode);
+    });
+
     controller.on('mode-change', ({ detail }) => {
       modeButtons.forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.mode === detail.mode);
+      });
+      authoringModeButtons.forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.mode === detail.mode);
       });
     });
@@ -441,12 +869,20 @@ async function init() {
 
     if (saveBtn) {
       saveBtn.addEventListener('click', () => {
-        const ndjson = world.serialize();
+        if (!world.hasUnsavedEdits()) {
+          alert('No edits to export');
+          return;
+        }
+        const ndjson = world.exportEditorPatch();
+        if (!ndjson) {
+          alert('No edits to export');
+          return;
+        }
         const blob = new Blob([ndjson], { type: 'application/x-ndjson' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'world.ndjson';
+        a.download = 'world-edits.ndjson';
         a.click();
         URL.revokeObjectURL(url);
       });
@@ -464,10 +900,31 @@ async function init() {
         reader.onload = (ev) => {
           try {
             const text = ev.target?.result;
-            world.deserialize(text);
-            searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
-            refreshLayerSummary();
-            renderer.fitCameraToWorld();
+            if (typeof text !== 'string') {
+              throw new Error('Unsupported file contents');
+            }
+            const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (!lines.length) {
+              throw new Error('File was empty');
+            }
+            let parsedHeader = null;
+            try {
+              parsedHeader = JSON.parse(lines[0]);
+            } catch (err) {
+              parsedHeader = null;
+            }
+            if (parsedHeader?.type === 'editorPatch') {
+              world.applyEditorPatch(text);
+              searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
+            } else {
+              world.deserialize(text);
+              searchIndex = buildSearchIndex(world.getTerrainLayer().quadtree);
+              refreshLayerSummary();
+              renderer.fitCameraToWorld();
+            }
+            refreshCurrentSelection();
+            populateAuthoring(currentSelection);
+            refreshAuthoringSummary();
           } catch (err) {
             alert('Failed to load world: ' + (err?.message || err));
           }

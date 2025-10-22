@@ -48,6 +48,50 @@
         <button id="loadBtn">Load</button>
       </div>
     </section>
+
+    <section id="authoringPanel" class="panel">
+      <header>Authoring</header>
+      <div class="panel-subtext authoring-status">
+        <span id="unsavedIndicator" class="unsaved-indicator" hidden aria-hidden="true" title="Unsaved edits">●</span>
+        <span id="authoringStatusText">No selection</span>
+      </div>
+      <div id="authoringModeControls" class="mode-toggle" role="group" aria-label="Authoring mode">
+        <button type="button" data-mode="edit-terrain">Terrain</button>
+        <button type="button" data-mode="edit-vector">Vector</button>
+        <button type="button" data-mode="edit-building">Buildings</button>
+      </div>
+      <form id="authoringForm" class="form-stack" autocomplete="off">
+        <div class="form-field">
+          <label for="authorName">Name</label>
+          <input type="text" id="authorName" placeholder="e.g. City Hall" />
+        </div>
+        <div class="form-field">
+          <label for="authorLandUse">Land use</label>
+          <input type="text" id="authorLandUse" placeholder="Residential, civic…" />
+        </div>
+        <div class="form-field">
+          <label for="authorStoreys">Storeys</label>
+          <input type="number" id="authorStoreys" min="0" step="1" inputmode="numeric" />
+        </div>
+        <div class="form-field">
+          <label for="authorTags">Tags</label>
+          <input type="text" id="authorTags" placeholder="Comma separated" />
+        </div>
+      </form>
+      <div class="control-group authoring-actions">
+        <button id="authorApply" type="button" disabled>Apply changes</button>
+        <button id="authorDiscard" type="button" disabled>Discard</button>
+      </div>
+      <div id="authoringError" class="form-error" role="status" aria-live="polite"></div>
+      <div class="context-divider"></div>
+      <div class="context-row heading">Pending edits</div>
+      <ul id="authoringEdits" class="edits-list"></ul>
+      <div class="context-divider"></div>
+      <div class="control-group subdivision-controls">
+        <button id="subdivideSelected" type="button" disabled>Subdivide node</button>
+        <button id="clearNodeEdits" type="button" disabled>Clear node edits</button>
+      </div>
+    </section>
   </div>
 
   <div id="breadcrumbsOverlay" class="overlay-panel">
